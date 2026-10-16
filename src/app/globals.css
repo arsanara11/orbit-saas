@@ -2,7 +2,7 @@
 @import "tailwindcss";
 
 :root {
-  --page: #dcdbea;
+  --page: #fcfcff;
   --surface: #ffffff;
   --ink: #17152f;
   --muted: #a09eb4;
@@ -46,14 +46,12 @@ input:focus-visible {
 .orbit-shell {
   position: relative;
   display: grid;
+  width: 100%;
   min-height: 100vh;
-  place-items: center;
+  place-items: stretch;
   overflow: hidden;
-  padding: 35px 4.1%;
-  background:
-    radial-gradient(ellipse at 8% 10%, #efedfa 0, transparent 30%),
-    radial-gradient(ellipse at 95% 85%, #eeecf9 0, transparent 28%),
-    linear-gradient(130deg, #d4d3e4, #e3e2ee 52%, #d1d1e2);
+  padding: 0;
+  background: #fcfcff;
   transition: background .2s, color .2s;
 }
 
@@ -101,13 +99,13 @@ input:focus-visible {
   position: relative;
   z-index: 1;
   display: flex;
-  width: min(100%, 1540px);
-  min-height: 790px;
+  width: 100%;
+  min-height: 100vh;
   overflow: hidden;
-  border: 1px solid #ffffffc9;
-  border-radius: 31px;
+  border: 0;
+  border-radius: 0;
   background: #fcfcff;
-  box-shadow: 0 24px 70px #37334c20, 0 3px 12px #403b5b08;
+  box-shadow: none;
 }
 
 .orbit-sidebar {
@@ -2097,3 +2095,4 @@ input:focus-visible {
     font-size: 8px;
   }
 }
+
