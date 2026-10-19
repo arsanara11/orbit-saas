@@ -1,511 +1,59 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
-type Task = {
-  id: number;
-  title: string;
-  date: string;
-  duration: string;
-  progress: number;
-  done: boolean;
-};
+type Status = "To Do" | "In Progress" | "In Review";
+type Task = { id: number; title: string; description: string; status: Status; priority: "Low" | "Medium" | "High"; date: string; progress: number; comments: number; files: number; people: string[] };
 
 const initialTasks: Task[] = [
-  { id: 1, title: "Conduct research", date: "17 Oct, 09:20 AM", duration: "02 h 45 m", progress: 90, done: false },
-  { id: 2, title: "Schedule a meeting", date: "17 Oct, 12:45 AM", duration: "06 h 55 m", progress: 50, done: false },
-  { id: 3, title: "Send out reminders", date: "21 Oct, 10:30 AM", duration: "01 h 30 m", progress: 10, done: false },
+  { id: 1, title: "New task", description: "Involves creating and assigning a new task within the project management system. The team can collaborate and track progress here.", status: "To Do", priority: "Medium", date: "Oct 20, 2026", progress: 0, comments: 2, files: 1, people: ["NS", "AR"] },
+  { id: 2, title: "Planning meeting for second option of the dashboard", description: "Focus on strategizing and outlining the development of the second option for the dashboard.", status: "In Progress", priority: "Medium", date: "Oct 20, 2026", progress: 65, comments: 7, files: 2, people: ["NS", "MK"] },
+  { id: 3, title: "Finish the ideation", description: "The team will conclude the ideation phase by finalizing and refining concepts that have been discussed.", status: "In Progress", priority: "High", date: "Oct 22, 2026", progress: 75, comments: 34, files: 12, people: ["NS", "AR", "MK"] },
+  { id: 4, title: "Preparation low-fidelity for mobile", description: "Involves creating low-fidelity wireframes specifically for the mobile version of the project.", status: "In Progress", priority: "Low", date: "Oct 24, 2026", progress: 30, comments: 3, files: 1, people: ["AR", "MK"] },
+  { id: 5, title: "Business model canvas of product", description: "Developing a comprehensive Business Model Canvas for the product, outlining the key components.", status: "In Review", priority: "Low", date: "Oct 21, 2026", progress: 90, comments: 5, files: 3, people: ["NS", "MK"] },
 ];
-
-const days = [
-  { day: "Mon", date: 14 },
-  { day: "Tue", date: 15 },
-  { day: "Wed", date: 16 },
-  { day: "Thu", date: 17 },
-  { day: "Fri", date: 18 },
-  { day: "Sat", date: 19 },
-  { day: "Sun", date: 20 },
-];
+const columns: Status[] = ["To Do", "In Progress", "In Review"];
+const navItems = [{ label: "Overview", icon: "grid" }, { label: "Projects", icon: "folder" }, { label: "Activity", icon: "activity" }, { label: "Messages", icon: "message" }, { label: "Calendar", icon: "calendar" }, { label: "Settings", icon: "settings" }];
+function Icon({ name, size = 18 }: { name: string; size?: number }) {
+  const common = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true as const };
+  const paths: Record<string, React.ReactNode> = {
+    grid: <><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></>, folder: <><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/><path d="M3 10h18"/></>, activity: <><path d="M3 12h4l3-8 4 16 3-8h4"/></>, message: <><path d="M20 11.5a7.5 7.5 0 0 1-8 7.5 8.8 8.8 0 0 1-4-.9L3 20l1.5-4A7.2 7.2 0 0 1 4 12c0-4.1 3.6-7.5 8-7.5s8 3.1 8 7z"/></>, calendar: <><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></>, settings: <><circle cx="12" cy="12" r="3"/><path d="m19.4 15 .1.1 1.1 1.8-1.8 3.1-2.1-.5a8 8 0 0 1-1.8 1l-.7 2h-3.6l-.7-2a8 8 0 0 1-1.8-1l-2.1.5-1.8-3.1 1.1-1.8a7 7 0 0 1 0-2l-1.1-1.8 1.8-3.1 2.1.5a8 8 0 0 1 1.8-1l.7-2h3.6l.7 2a8 8 0 0 1 1.8 1l2.1-.5 1.8 3.1-1.1 1.8a7 7 0 0 1 0 2Z" transform="translate(0 -1) scale(.94)"/></>, search: <><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4.5 4.5"/></>, plus: <path d="M12 5v14M5 12h14"/>, more: <><circle cx="5" cy="12" r=".7"/><circle cx="12" cy="12" r=".7"/><circle cx="19" cy="12" r=".7"/></>, lock: <><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></>, chevron: <path d="m7 10 5 5 5-5"/>, filter: <><path d="M4 5h16M7 12h10m-7 7h4"/><circle cx="8" cy="5" r="1.5" fill="currentColor"/><circle cx="15" cy="12" r="1.5" fill="currentColor"/></>, paperclip: <path d="m8 12.5 6.8-6.8a3 3 0 0 1 4.2 4.2l-8.5 8.5a5 5 0 0 1-7.1-7.1l8.1-8.1"/>, comment: <><path d="M21 11.5a8 8 0 0 1-8.5 8 9 9 0 0 1-4.2-1L3 20l1.7-4.4a7.5 7.5 0 0 1-.7-3.1 8 8 0 0 1 8.5-7.5 8 8 0 0 1 8.5 6.5Z"/></>, clock: <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>, check: <path d="m5 12 4 4L19 6"/>, moon: <path d="M20.5 15A8.5 8.5 0 0 1 9 3.5 8.5 8.5 0 1 0 20.5 15Z"/>, bell: <><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></>, spark: <path d="m12 2 1.7 7.3L21 12l-7.3 1.7L12 21l-1.7-7.3L3 12l7.3-2.7Z"/>
+  };
+  return <svg {...common}>{paths[name] || paths.grid}</svg>;
+}
+function Avatar({ initials, index = 0 }: { initials: string; index?: number }) { return <span className={`avatar avatar-${index % 4}`} title={initials}>{initials}</span>; }
 
 export default function Home() {
-  const [dark, setDark] = useState(false);
-  const [activeNav, setActiveNav] = useState("Dashboard");
-  const [tasks, setTasks] = useState(initialTasks);
+  const [dark, setDark] = useState(true);
+  const [activeNav, setActiveNav] = useState("Projects");
+  const [tasks, setTasks] = useState<Task[]>(initialTasks);
   const [search, setSearch] = useState("");
-  const [newTask, setNewTask] = useState("");
-  const [showTaskForm, setShowTaskForm] = useState(false);
-  const [selectedDay, setSelectedDay] = useState(18);
+  const [showForm, setShowForm] = useState(false);
+  const [newTitle, setNewTitle] = useState("");
+  const [newStatus, setNewStatus] = useState<Status>("To Do");
+  const [project, setProject] = useState("Orbit Workspace");
   const [showNotifications, setShowNotifications] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
-  const [showExport, setShowExport] = useState(false);
-
-  const visibleTasks = tasks.filter((task) =>
-    task.title.toLowerCase().includes(search.toLowerCase())
-  );
-
-  const completedCount = tasks.filter((task) => task.done).length;
-
-  function addTask(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!newTask.trim()) return;
-
-    setTasks((current) => [
-      ...current,
-      {
-        id: Date.now(),
-        title: newTask.trim(),
-        date: "17 Oct, 03:00 PM",
-        duration: "00 h 30 m",
-        progress: 0,
-        done: false,
-      },
-    ]);
-    setNewTask("");
-    setShowTaskForm(false);
-  }
-
-  function toggleTask(id: number) {
-    setTasks((current) =>
-      current.map((task) =>
-        task.id === id
-          ? { ...task, done: !task.done, progress: task.done ? task.progress : 100 }
-          : task
-      )
-    );
-  }
-
-  return (
-    <main className={`orbit-shell ${dark ? "dark-mode" : ""}`}>
-      <div className="ambient ambient-one" />
-      <div className="ambient ambient-two" />
-      <div className="ambient-dot dot-one" />
-      <div className="ambient-dot dot-two" />
-
-      <div className="orbit-window">
-        <aside className="orbit-sidebar">
-          <div className="sidebar-wave" />
-
-          <button className="mobile-brand" onClick={() => setActiveNav("Dashboard")}>
-            ✳
-          </button>
-
-          <div className="sidebar-menu">
-            {[
-              { label: "Dashboard", icon: "▦" },
-              { label: "Profile", icon: "♙" },
-              { label: "Analytics", icon: "◔" },
-              { label: "Notifications", icon: "♧" },
-              { label: "Calendar", icon: "▦" },
-              { label: "Messages", icon: "✉" },
-              { label: "Notes", icon: "▤" },
-              { label: "Community", icon: "◉" },
-            ].map((item, index) => (
-              <button
-                key={item.label}
-                title={item.label}
-                className={`sidebar-icon ${activeNav === item.label ? "sidebar-icon-active" : ""}`}
-                onClick={() => {
-                  setActiveNav(item.label);
-                  if (item.label === "Notifications") setShowNotifications(true);
-                }}
-              >
-                <span>{item.icon}</span>
-                {index === 2 && <small>PRO</small>}
-                {index === 5 && <i />}
-              </button>
-            ))}
-          </div>
-
-          <div className="sidebar-bottom-mark">O</div>
-        </aside>
-
-        <div className="orbit-main">
-          <header className="orbit-navbar">
-            <div className="nav-links">
-              {["Dashboard", "Workflows", "Integrations"].map((item, index) => (
-                <button
-                  key={item}
-                  className={activeNav === item ? "nav-link nav-link-active" : "nav-link"}
-                  onClick={() => setActiveNav(item)}
-                >
-                  <span>{["▦", "♧", "♧"][index]}</span>
-                  {item}
-                </button>
-              ))}
-            </div>
-
-            <label className="command-search">
-              <span>⌕</span>
-              <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search or type command"
-              />
-              {search && (
-                <button onClick={() => setSearch("")} aria-label="Clear search">×</button>
-              )}
-            </label>
-
-            <div className="navbar-tools">
-              <div className="theme-switch">
-                <button className={!dark ? "theme-active" : ""} onClick={() => setDark(false)}>
-                  ☀ <span>Light</span>
-                </button>
-                <button className={dark ? "theme-active" : ""} onClick={() => setDark(true)}>
-                  ☾ <span>Dark</span>
-                </button>
-              </div>
-
-              <div className="tool-popover-wrap">
-                <button
-                  className="navbar-icon"
-                  title="Notifications"
-                  onClick={() => setShowNotifications(!showNotifications)}
-                >
-                  ♧
-                  <i />
-                </button>
-                {showNotifications && (
-                  <div className="small-popover">
-                    <strong>Notifications</strong>
-                    <p>Your design sync starts today at 10:30 AM.</p>
-                    <p>You have {tasks.filter((task) => !task.done).length} tasks in progress.</p>
-                    <button onClick={() => setShowNotifications(false)}>Got it</button>
-                  </div>
-                )}
-              </div>
-
-              <div className="tool-popover-wrap">
-                <button
-                  className="navbar-icon"
-                  title="Settings"
-                  onClick={() => setShowSettings(!showSettings)}
-                >
-                  ⚙
-                </button>
-                {showSettings && (
-                  <div className="small-popover">
-                    <strong>Quick settings</strong>
-                    <p>Appearance</p>
-                    <button onClick={() => setDark(!dark)}>
-                      Switch to {dark ? "light" : "dark"} mode
-                    </button>
-                    <button onClick={() => setShowSettings(false)}>Close</button>
-                  </div>
-                )}
-              </div>
-
-              <div className="tool-popover-wrap export-wrap">
-                <button className="export-button" onClick={() => setShowExport(!showExport)}>
-                  ↓ <span>Export data</span> <b>xls</b>
-                </button>
-                {showExport && (
-                  <div className="small-popover">
-                    <strong>Export your tasks</strong>
-                    <p>{tasks.length} tasks are ready to export.</p>
-                    <button
-                      onClick={() => {
-                        const csv = [
-                          "Task,Date,Duration,Progress,Completed",
-                          ...tasks.map((task) =>
-                            `"${task.title}","${task.date}","${task.duration}",${task.progress}%,${task.done}`
-                          ),
-                        ].join("\n");
-                        const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-                        const link = document.createElement("a");
-                        link.href = url;
-                        link.download = "orbit-tasks.csv";
-                        link.click();
-                        URL.revokeObjectURL(url);
-                        setShowExport(false);
-                      }}
-                    >
-                      Download CSV
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              <button className="add-board-button" onClick={() => setShowTaskForm(true)}>
-                Add new board
-              </button>
-            </div>
-          </header>
-
-          <div className="orbit-content">
-            <section className="hero-row">
-              <div className="hero-copy">
-                <div className="hero-greeting">
-                  <h1>Hi, Nabila!</h1>
-                  <span className="greeting-orbit">✺</span>
-                  <span className="greeting-sound">◉</span>
-                </div>
-                <h2>What are your<br />plans for today?</h2>
-                <p>
-                  Your space to organize ideas, manage tasks,<br className="desktop-break" />
-                  and bring your best work together.
-                </p>
-              </div>
-
-              <div className="feature-area">
-                <button
-                  className="add-feature-card"
-                  onClick={() => setShowTaskForm(true)}
-                  aria-label="Add new item"
-                >
-                  <span>+</span>
-                </button>
-
-                <article className="feature-card">
-                  <div className="feature-art art-calendar">
-                    <div className="art-calendar-top" />
-                    <div className="art-calendar-grid">
-                      {Array.from({ length: 9 }, (_, index) => (
-                        <i key={index} />
-                      ))}
-                    </div>
-                    <span className="art-pointer">↗</span>
-                  </div>
-                  <h3>Stay organized</h3>
-                  <p>A clear structure for your notes</p>
-                </article>
-
-                <article className="feature-card">
-                  <div className="feature-art art-notes">
-                    <div className="note-sheet note-one">✓<i /><i /><i /></div>
-                    <div className="note-sheet note-two">✎<i /><i /><i /></div>
-                    <div className="note-sheet note-three">♡<i /><i /><i /></div>
-                  </div>
-                  <h3>Sync your notes</h3>
-                  <p>Keep all your ideas in one place</p>
-                </article>
-
-                <article className="feature-card">
-                  <div className="feature-art art-folder">
-                    <div className="folder-tab" />
-                    <div className="folder-sheet"><i /><i /><i /></div>
-                    <span className="folder-spark">✧</span>
-                  </div>
-                  <h3>Collaborate and share</h3>
-                  <p>Share notes with your colleagues</p>
-                </article>
-              </div>
-            </section>
-
-            {showTaskForm && (
-              <form className="task-composer" onSubmit={addTask}>
-                <div>
-                  <strong>Create a new task</strong>
-                  <p>Add something you want to get done.</p>
-                </div>
-                <input
-                  autoFocus
-                  value={newTask}
-                  onChange={(event) => setNewTask(event.target.value)}
-                  placeholder="Enter task name..."
-                />
-                <button className="composer-submit" type="submit">Add task</button>
-                <button className="composer-cancel" type="button" onClick={() => setShowTaskForm(false)}>×</button>
-              </form>
-            )}
-
-            <section className="middle-grid">
-              <article className="soft-panel notifications-panel">
-                <div className="section-title">
-                  <h3>Notifications</h3>
-                  <button onClick={() => setShowNotifications(false)}>♧ Clear</button>
-                </div>
-
-                <div className="notification-feature">
-                  <div className="notification-text">
-                    <div className="notification-title">Upcoming event <span className="online-dot" /></div>
-                    <p>Landing design meeting · Time: 120 min</p>
-                    <small>▦ Sat, 17 Oct <span>◷ 11 AM - 11:45 AM</span></small>
-                  </div>
-                  <button aria-label="More event options" onClick={() => alert("Event options coming soon.")}>•••</button>
-                </div>
-
-                <div className="notification-message">
-                  <div className="message-top">
-                    <div>
-                      <strong>Message | Product design</strong>
-                      <p>✉ Message from Ken Smith</p>
-                    </div>
-                    <button aria-label="More message options" onClick={() => alert("Message options coming soon.")}>•••</button>
-                  </div>
-                  <div className="message-preview">Hey team, just wanted to check in and see how is...</div>
-                </div>
-              </article>
-
-              <article className="soft-panel assignments-panel">
-                <div className="section-title">
-                  <h3>Assignments</h3>
-                  <button onClick={() => setShowTaskForm(true)}>♢ Edit</button>
-                </div>
-
-                <div className="assignment-project">
-                  <span>Motion design</span>
-                  <span>Logo</span>
-                  <button aria-label="Assignment options" onClick={() => alert("Assignment options coming soon.")}>•••</button>
-                </div>
-
-                <div className="assignment-content">
-                  <div>
-                    <h4>Design a packaging concept<br />for a new product</h4>
-                    <span className="assignment-tag">Package design</span>
-                  </div>
-                  <div className="assignment-meta">
-                    <span className="high-tag">High</span>
-                    <small>Rachel Lee <b>RL</b></small>
-                  </div>
-                </div>
-
-                <button className="add-assignment" onClick={() => setShowTaskForm(true)}>
-                  <span>+</span> Add new assignment
-                </button>
-              </article>
-
-              <article className="soft-panel calendar-panel">
-                <div className="section-title">
-                  <h3>October 2026</h3>
-                  <div className="calendar-arrows">
-                    <button onClick={() => setSelectedDay(Math.max(14, selectedDay - 1))}>‹</button>
-                    <button onClick={() => setSelectedDay(Math.min(20, selectedDay + 1))}>›</button>
-                  </div>
-                </div>
-
-                <div className="mini-calendar">
-                  {days.map((item) => (
-                    <button
-                      key={item.day}
-                      className={selectedDay === item.date ? "selected-day" : ""}
-                      onClick={() => setSelectedDay(item.date)}
-                    >
-                      <small>{item.day}</small>
-                      <span>{item.date}</span>
-                    </button>
-                  ))}
-                </div>
-
-                <div className="calendar-time">04:30-05:00 PM <span /></div>
-
-                <div className="meeting-item">
-                  <div className="meeting-symbol">♧</div>
-                  <div>
-                    <strong>Team meeting</strong>
-                    <p>12:00 - 12:30 · UX/UI design</p>
-                  </div>
-                  <button onClick={() => alert("Meeting options coming soon.")}>⋮</button>
-                </div>
-
-                <div className="calendar-time">11:30-12:30 PM <span /></div>
-
-                <div className="meeting-item">
-                  <div className="meeting-symbol">▣</div>
-                  <div>
-                    <strong>Meeting with new client</strong>
-                    <p>12:30 - 01:30 PM · Job interview</p>
-                  </div>
-                  <button onClick={() => alert("Meeting options coming soon.")}>⋮</button>
-                </div>
-              </article>
-            </section>
-
-            <section className="bottom-grid">
-              <article className="soft-panel today-panel">
-                <div className="section-title">
-                  <div className="today-heading">
-                    <h3>Today tasks</h3>
-                    <div className="avatar-stack">
-                      <span>NS</span><span>AR</span><span>MK</span><button>+</button>
-                    </div>
-                  </div>
-                  <div className="task-panel-actions">
-                    <span>◉ <b>{completedCount}</b></span>
-                    <button onClick={() => setShowTaskForm(true)}>♢ Edit</button>
-                    <button onClick={() => alert("Sharing options coming soon.")}>♧ Share</button>
-                  </div>
-                </div>
-
-                <div className="task-table-heading">
-                  <span>TASK</span><span>DURATION</span><span>PROGRESS</span>
-                </div>
-
-                <div className="today-task-list">
-                  {visibleTasks.map((task) => (
-                    <div className={`today-task-row ${task.done ? "task-completed" : ""}`} key={task.id}>
-                      <button className="task-name-button" onClick={() => toggleTask(task.id)}>
-                        <span className={`task-check ${task.done ? "task-check-done" : ""}`}>
-                          {task.done ? "✓" : ""}
-                        </span>
-                        <span>
-                          <strong>{task.title}</strong>
-                          <small>{task.date}</small>
-                        </span>
-                      </button>
-                      <span className="duration-value">{task.duration}</span>
-                      <div className="task-progress">
-                        <strong>{task.done ? 100 : task.progress}%</strong>
-                        <div className="progress-line"><span style={{ width: `${task.done ? 100 : task.progress}%` }} /></div>
-                      </div>
-                    </div>
-                  ))}
-                  {visibleTasks.length === 0 && <p className="empty-tasks">No matching tasks. Try another search.</p>}
-                </div>
-
-                <button className="view-tasks" onClick={() => setShowTaskForm(true)}>+ Add another task</button>
-              </article>
-
-              <article className="premium-card">
-                <div className="premium-illustration">
-                  <span className="premium-star">✦</span>
-                  <div className="gift-box"><span>✳</span></div>
-                  <div className="gift-ribbon" />
-                  <span className="gift-spark spark-a">✧</span>
-                  <span className="gift-spark spark-b">✦</span>
-                  <span className="gift-spark spark-c">✧</span>
-                </div>
-                <h3>Go premium!</h3>
-                <p>Gain access to a range of<br />benefits designed to enhance<br />your workspace experience.</p>
-                <button onClick={() => alert("Orbit Premium is coming soon!")}>Find out more</button>
-              </article>
-
-              <div className="right-bottom-stack">
-                <div className="progress-cards">
-                  <article className="progress-card">
-                    <div className="ring ring-green"><span>90%</span></div>
-                    <div><small>DATA RESEARCH</small><strong>Marketing</strong><p>You marked 5/5<br />All assignments are done!</p></div>
-                  </article>
-                  <article className="progress-card">
-                    <div className="ring ring-red"><span>65%</span></div>
-                    <div><small>UX/UI DESIGN</small><strong>Typography</strong><p>You marked 3/5<br />2 assignments left</p><button onClick={() => setActiveNav("Assignments")}>Check</button></div>
-                  </article>
-                </div>
-
-                <article className="soft-panel board-meeting">
-                  <div className="section-title">
-                    <div>
-                      <h3>Board meeting</h3>
-                      <p className="board-date"><span /> March 24 at 4:00 PM</p>
-                    </div>
-                    <button onClick={() => alert("Meeting editing coming soon.")}>♢ Edit</button>
-                  </div>
-                  <p className="board-description">Meeting with John Smith,<br />4th floor, room 159</p>
-                  <div className="board-actions">
-                    <button onClick={() => alert("Rescheduling will be available soon.")}>Reschedule</button>
-                    <button onClick={() => alert("Invitation accepted!")}>Accept invite</button>
-                  </div>
-                </article>
-              </div>
-            </section>
-
-            <footer className="orbit-footer">
-              <span>© 2026 Orbit Workspace</span>
-              <span>Designed for your flow ✦</span>
-            </footer>
-          </div>
-        </div>
-      </div>
-    </main>
-  );
+  const [showFilters, setShowFilters] = useState(false);
+  const [filter, setFilter] = useState("All priorities");
+  const filteredTasks = useMemo(() => tasks.filter(t => `${t.title} ${t.description}`.toLowerCase().includes(search.toLowerCase()) && (filter === "All priorities" || t.priority === filter)), [tasks, search, filter]);
+  function addTask(e: React.FormEvent<HTMLFormElement>) { e.preventDefault(); if (!newTitle.trim()) return; setTasks(old => [...old, { id: Date.now(), title: newTitle.trim(), description: "Add a description to keep the team aligned on the next steps.", status: newStatus, priority: "Medium", date: "Oct 26, 2026", progress: 0, comments: 0, files: 0, people: ["NS"] }]); setNewTitle(""); setShowForm(false); }
+  function moveTask(id: number, status: Status) { setTasks(old => old.map(t => t.id === id ? { ...t, status } : t)); }
+  return <main className={`orbit-app ${dark ? "dark" : "light"}`}>
+    <div className="browser-bar"><div className="traffic-lights"><i/><i/><i/></div><div className="browser-tab"><span className="brand-mini"><Icon name="spark" size={12}/></span> Orbit · Workspace <b>×</b></div><span className="browser-plus">+</span><div className="browser-address"><span>◈</span> app.orbit.workspace / projects <Icon name="chevron" size={12}/></div><div className="browser-right">•••</div></div>
+    <div className="app-layout">
+      <aside className="rail"><div className="brand-mark"><Icon name="spark" size={22}/></div><div className="rail-nav">{navItems.map(item => <button key={item.label} title={item.label} onClick={() => setActiveNav(item.label)} className={activeNav === item.label ? "rail-active" : ""}><Icon name={item.icon}/></button>)}</div><div className="rail-bottom"><button title="Help"><span>?</span></button><button className="rail-moon" title="Toggle theme" onClick={() => setDark(!dark)}><Icon name="moon"/></button></div></aside>
+      <aside className="project-sidebar"><div className="side-heading"><div><span className="eyebrow">WORKSPACE</span><h2>Projects</h2></div><button className="icon-button" aria-label="More project options"><Icon name="more"/></button></div><div className="workspace-switch"><button className="selected">Team</button><button>Personal</button></div><label className="project-search"><Icon name="search" size={16}/><input placeholder="Search projects..." value={search} onChange={e => setSearch(e.target.value)}/><kbd>⌘ K</kbd></label><div className="sidebar-section-label">RECENT <Icon name="chevron" size={13}/></div><button className="project-item current"><span className="project-hash">#</span><span>{project}</span><b>{tasks.filter(t => t.status !== "In Review").length}</b></button><button className="project-item"><span className="project-hash">#</span><span>Website Redesign</span><b className="count-warm">8</b></button><button className="project-item"><span className="project-hash">#</span><span>Mobile App UI</span><b className="count-lilac">5</b></button><button className="project-item"><span className="project-hash">#</span><span>Marketing Campaign</span><b className="count-green">3</b></button><div className="sidebar-section-label categories-label">CATEGORIES <Icon name="chevron" size={13}/></div><button className="category-item"><span className="category-dot purple"/>SaaS Product<span>›</span></button><button className="category-item"><span className="category-dot green"/>Design System<span>›</span></button><button className="category-item"><span className="category-dot amber"/>Research<span>›</span></button><div className="sidebar-bottom"><div className="storage-card"><div className="storage-icon"><Icon name="folder" size={16}/></div><div><strong>Workspace storage</strong><small>68% of 10 GB used</small><div className="storage-track"><i/></div></div></div><button className="new-project" onClick={() => {setProject("New Orbit Project"); setActiveNav("Projects");}}><Icon name="plus" size={16}/> New project</button><div className="profile-row"><Avatar initials="NS"/><div><strong>Nabila Sabrina</strong><small>Free workspace</small></div><button className="icon-button"><Icon name="more"/></button></div></div></aside>
+      <section className="main-content"><header className="topbar"><div className="breadcrumbs"><span>Projects</span><span className="crumb-slash">/</span><strong>{project}</strong></div><div className="top-actions"><span className="last-updated"><i/> Saved just now</span><button className="top-icon" title="Notifications" onClick={() => setShowNotifications(!showNotifications)}><Icon name="bell"/><i/></button><button className="top-icon" title="Toggle theme" onClick={() => setDark(!dark)}><Icon name="moon"/></button><Avatar initials="NS"/><button className="invite-button" onClick={() => alert("Invite link sharing will be available soon.")}><Icon name="plus" size={15}/> Invite members</button></div>{showNotifications && <div className="notification-pop"><strong>Notifications</strong><p><span className="notice-dot"/> Your team workspace is up to date.</p><p><span className="notice-dot notice-purple"/> {tasks.filter(t => t.status === "In Progress").length} tasks are currently in progress.</p><button onClick={() => setShowNotifications(false)}>Mark as read</button></div>}</header>
+        <div className="project-heading"><div><div className="project-title-line"><h1>{project}</h1><button className="edit-title" title="Rename project" onClick={() => { const name = window.prompt("Project name", project); if (name?.trim()) setProject(name.trim()); }}>↗</button></div><p className="project-subtitle">Plan, collaborate, and ship great work together.</p><div className="member-line"><div className="avatar-stack"><Avatar initials="NS" index={0}/><Avatar initials="AR" index={1}/><Avatar initials="MK" index={2}/><Avatar initials="JL" index={3}/></div><span className="more-members">+3</span><span className="private-label"><Icon name="lock" size={13}/> Private</span><span className="toggle-pill"><i/></span></div></div><div className="heading-actions"><button className="square-button" title="Calendar"><Icon name="calendar"/></button><button className="view-select">Board <Icon name="chevron" size={14}/></button><button className="square-button" title="Filter" onClick={() => setShowFilters(!showFilters)}><Icon name="filter"/></button><button className="invite-button invite-desktop" onClick={() => setShowForm(true)}><Icon name="plus" size={15}/> Add task</button></div></div>
+        {showFilters && <div className="filter-row"><span>Filter by priority</span>{["All priorities", "High", "Medium", "Low"].map(f => <button key={f} className={filter === f ? "filter-selected" : ""} onClick={() => setFilter(f)}>{f}</button>)}<button className="filter-clear" onClick={() => {setFilter("All priorities"); setSearch("");}}>Clear filters</button></div>}
+        {showForm && <form className="task-form" onSubmit={addTask}><div className="form-heading"><strong>Create a task</strong><span>Quickly add a task to your board</span></div><input autoFocus value={newTitle} onChange={e => setNewTitle(e.target.value)} placeholder="Task title..." required/><select value={newStatus} onChange={e => setNewStatus(e.target.value as Status)}>{columns.map(c => <option key={c}>{c}</option>)}</select><button type="submit" className="primary-button">Create task</button><button type="button" className="cancel-button" onClick={() => setShowForm(false)}>Cancel</button></form>}
+        <div className="board-toolbar"><div className="board-tabs"><button className="board-tab-active">Board view</button><button>List view</button><button>Timeline</button></div><div className="board-tools"><label className="board-search"><Icon name="search" size={15}/><input placeholder="Search tasks" value={search} onChange={e => setSearch(e.target.value)}/></label><div className="board-avatars"><Avatar initials="NS"/><Avatar initials="AR" index={1}/><Avatar initials="MK" index={2}/><span>+2</span></div><button className="add-task-small" onClick={() => setShowForm(true)}><Icon name="plus" size={15}/> Add task</button></div></div>
+        <div className="kanban-board">{columns.map((column, ci) => { const list = filteredTasks.filter(t => t.status === column); return <section className="kanban-column" key={column}><div className="column-heading"><div className="column-name"><span className={`column-indicator indicator-${ci}`}/><h2>{column}</h2><span className="column-count">{list.length}</span></div><div className="column-controls"><button title="Add task" onClick={() => {setNewStatus(column); setShowForm(true);}}><Icon name="plus" size={17}/></button><button title="Column options"><Icon name="more" size={17}/></button></div></div><div className="task-stack">{list.map((task, ti) => <article className={`task-card ${ti === 0 && ci !== 1 ? "task-card-feature" : ""}`} key={task.id}>
+          {task.id === 1 && <div className="task-illustration"><div className="illustration-window"><div className="window-dots"><i/><i/><i/></div><div className="wire-card wire-a"/><div className="wire-card wire-b"/><div className="wire-card wire-c"/><div className="wire-lines"><i/><i/><i/></div><div className="wire-button"><Icon name="plus" size={13}/></div></div><span className="art-cursor">↖</span></div>}
+          {task.id === 5 && <div className="canvas-art"><div className="canvas-diamond diamond-one"/><div className="canvas-diamond diamond-two"/><div className="canvas-node node-one">◎</div><div className="canvas-node node-two">✣</div><div className="canvas-node node-three">♟</div><div className="canvas-node node-four">▤</div><div className="canvas-connect connect-one"/><div className="canvas-connect connect-two"/><div className="canvas-connect connect-three"/></div>}
+          <div className="task-meta"><span className={`priority priority-${task.priority.toLowerCase()}`}>{task.priority}</span><span className="date-chip"><Icon name="calendar" size={12}/>{task.date}</span><button className="card-more" title="Task options"><Icon name="more" size={16}/></button></div><h3>{task.title}</h3><p className="task-description">{task.description}</p>{task.progress > 0 && <div className="progress-wrap"><div className={`progress-track progress-${task.priority.toLowerCase()}`}><i style={{width: `${task.progress}%`}}/></div><span>{task.progress}%</span></div>}<div className="task-card-footer"><div className="task-avatars">{task.people.map((person, i) => <Avatar key={person} initials={person} index={i}/>)}</div><div className="task-stats"><span><Icon name="paperclip" size={13}/>{task.files}</span><span><Icon name="comment" size={13}/>{task.comments}</span><button title="Mark complete" onClick={() => moveTask(task.id, task.status === "In Review" ? "To Do" : "In Review")}><Icon name="check" size={14}/></button></div></div><div className="card-move"><span>Move to</span>{columns.filter(c => c !== task.status).map(c => <button key={c} onClick={() => moveTask(task.id, c)}>{c}</button>)}</div></article>)}{list.length === 0 && <div className="empty-column">No tasks here yet.<button onClick={() => {setNewStatus(column); setShowForm(true);}}><Icon name="plus" size={14}/> Add a task</button></div>}<button className="column-add" onClick={() => {setNewStatus(column); setShowForm(true);}}><Icon name="plus" size={16}/> Add task</button></div></section>; })}</div>
+        <footer className="app-footer"><span>© 2026 Orbit Workspace</span><span><span className="footer-status"/> All changes saved</span></footer>
+      </section>
+    </div>
+  </main>;
 }
