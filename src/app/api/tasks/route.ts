@@ -17,7 +17,39 @@ const priorityMap = {
   Urgent: "URGENT",
 } as const;
 
-async function getCurrentUser() {
+function displayTask(task: {
+  id: string;
+  title: string;
+  description: string | null;
+  status: string;
+  priority: string;
+  dueDate: Date | null;
+}) {
+  const status =
+    Object.entries(statusMap).find(
+      ([, value]) => value === task.status,
+    )?.[0] ?? "To Do";
+
+  const priority =
+    Object.entries(priorityMap).find(
+      ([, value]) => value === task.priority,
+    )?.[0] ?? "Medium";
+
+  return {
+    id: task.id,
+    title: task.title,
+    description: task.description ?? "",
+    status,
+    priority,
+    date: task.dueDate?.toISOString() ?? null,
+    progress: 0,
+    comments: 0,
+    files: 0,
+    people: [],
+  };
+}
+
+async function getSessionUser() {
   const session = await auth.api.getSession({
     headers: await headers(),
   });
@@ -25,101 +57,84 @@ async function getCurrentUser() {
   return session?.user ?? null;
 }
 
-async function getDefaultProject(userId: string) {
-  const existing = await prisma.project.findFirst({
-    where: {
+async function getOrCreateProject(user: { id: string }) {
+  const membership = await prisma.membership.findFirst({
+    where: { userId: user.id },
+    include: {
       workspace: {
-        OR: [
-          { ownerId: userId },
-          { memberships: { some: { userId } } },
-        ],
+        include: {
+          projects: {
+            orderBy: { createdAt: "asc" },
+            take: 1,
+          },
+        },
       },
     },
-    orderBy: { createdAt: "asc" },
+    orderBy: { joinedAt: "asc" },
   });
 
-  if (existing) return existing;
+  if (membership) {
+    const existingProject = membership.workspace.projects[0];
 
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { id: true },
-  });
+    if (existingProject) {
+      return {
+        workspace: membership.workspace,
+        project: existingProject,
+      };
+    }
 
-  if (!user) return null;
-
-  return prisma.$transaction(async (tx) => {
-    // Check again inside the transaction to avoid creating
-    // a duplicate default project in ordinary concurrent requests.
-    const project = await tx.project.findFirst({
-      where: {
-        workspace: {
-          OR: [
-            { ownerId: userId },
-            { memberships: { some: { userId } } },
-          ],
-        },
-      },
-      orderBy: { createdAt: "asc" },
-    });
-
-    if (project) return project;
-
-    const workspace = await tx.workspace.create({
+    const newProject = await prisma.project.create({
       data: {
         name: "Orbit Workspace",
-        slug: `orbit-${userId}`,
-        ownerId: userId,
-        memberships: {
-          create: { userId, role: "OWNER" },
-        },
-        projects: {
-          create: { name: "My Tasks" },
-        },
+        workspaceId: membership.workspaceId,
       },
-      include: { projects: true },
     });
 
-    return workspace.projects[0] ?? null;
+    return {
+      workspace: membership.workspace,
+      project: newProject,
+    };
+  }
+
+  const workspace = await prisma.workspace.create({
+    data: {
+      name: "Orbit Workspace",
+      slug: `orbit-${user.id}`,
+      ownerId: user.id,
+      memberships: {
+        create: {
+          userId: user.id,
+          role: "OWNER",
+        },
+      },
+      projects: {
+        create: {
+          name: "Orbit Workspace",
+        },
+      },
+    },
+    include: {
+      projects: {
+        take: 1,
+      },
+    },
   });
-}
 
+  const newProject = workspace.projects[0];
 
-function serializeTask(task: {
-  id: string;
-  title: string;
-  description: string | null;
-  status: string;
-  priority: string;
-  dueDate: Date | null;
-  createdAt: Date;
-  updatedAt: Date;
-}) {
-  const statuses: Record<string, string> = {
-    TODO: "To Do",
-    IN_PROGRESS: "In Progress",
-    IN_REVIEW: "In Review",
-    DONE: "Done",
-  };
-
-  const priorities: Record<string, string> = {
-    LOW: "Low",
-    MEDIUM: "Medium",
-    HIGH: "High",
-    URGENT: "Urgent",
-  };
+  if (!newProject) {
+    throw new Error("Gagal membuat project Orbit Workspace.");
+  }
 
   return {
-    ...task,
-    status: statuses[task.status] ?? "To Do",
-    priority: priorities[task.priority] ?? "Medium",
-    date: task.dueDate,
+    workspace,
+    project: newProject,
   };
 }
-
 
 export async function GET() {
   try {
-    const user = await getCurrentUser();
+    const user = await getSessionUser();
 
     if (!user) {
       return NextResponse.json(
@@ -128,28 +143,31 @@ export async function GET() {
       );
     }
 
-    const project = await getDefaultProject(user.id);
-
-    if (!project) {
-      return NextResponse.json(
-        { error: "Project belum tersedia." },
-        { status: 404 },
-      );
-    }
+    const { workspace, project } = await getOrCreateProject(user);
 
     const tasks = await prisma.task.findMany({
-      where: { projectId: project.id },
-      orderBy: { createdAt: "desc" },
+      where: {
+        projectId: project.id,
+        createdById: user.id,
+      },
+      orderBy: {
+        createdAt: "asc",
+      },
     });
 
     return NextResponse.json({
-      project: { id: project.id, name: project.name },
-      tasks: tasks.map(serializeTask),
+      project: {
+        id: project.id,
+        name: project.name,
+        workspaceId: workspace.id,
+      },
+      tasks: tasks.map(displayTask),
     });
   } catch (error) {
-    console.error("GET /api/tasks:", error);
+    console.error("GET /api/tasks failed:", error);
+
     return NextResponse.json(
-      { error: "Gagal mengambil task." },
+      { error: "Gagal memuat task dari database." },
       { status: 500 },
     );
   }
@@ -157,7 +175,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const user = await getCurrentUser();
+    const user = await getSessionUser();
 
     if (!user) {
       return NextResponse.json(
@@ -166,88 +184,70 @@ export async function POST(request: Request) {
       );
     }
 
-    const body: unknown = await request.json();
+    const body = await request.json();
+    const title =
+      typeof body.title === "string" ? body.title.trim() : "";
 
-    if (
-      !body ||
-      typeof body !== "object" ||
-      !("title" in body) ||
-      typeof body.title !== "string" ||
-      !body.title.trim()
-    ) {
+    if (!title) {
       return NextResponse.json(
         { error: "Judul task wajib diisi." },
         { status: 400 },
       );
     }
 
-    const data = body as Record<string, unknown>;
-    const title = (data.title as string).trim();
-
-    if (title.length > 200) {
-      return NextResponse.json(
-        { error: "Judul maksimal 200 karakter." },
-        { status: 400 },
-      );
-    }
-
     const status =
-      typeof data.status === "string" &&
-      data.status in statusMap
-        ? statusMap[data.status as keyof typeof statusMap]
-        : "TODO";
+      statusMap[body.status as keyof typeof statusMap] ?? "TODO";
 
     const priority =
-      typeof data.priority === "string" &&
-      data.priority in priorityMap
-        ? priorityMap[data.priority as keyof typeof priorityMap]
-        : "MEDIUM";
+      priorityMap[body.priority as keyof typeof priorityMap] ??
+      "MEDIUM";
 
-    let dueDate: Date | undefined;
+    let dueDate: Date | null = null;
 
-    if (data.date) {
-      dueDate = new Date(String(data.date));
+    if (body.date !== undefined && body.date !== null && body.date !== "") {
+      if (typeof body.date !== "string") {
+        return NextResponse.json(
+          { error: "Format tanggal tidak valid." },
+          { status: 400 },
+        );
+      }
+
+      dueDate = new Date(body.date);
 
       if (Number.isNaN(dueDate.getTime())) {
         return NextResponse.json(
-          { error: "Tanggal task tidak valid." },
+          { error: "Format tanggal tidak valid." },
           { status: 400 },
         );
       }
     }
 
-    const project = await getDefaultProject(user.id);
-
-    if (!project) {
-      return NextResponse.json(
-        { error: "Project belum tersedia." },
-        { status: 404 },
-      );
-    }
+    const { project } = await getOrCreateProject(user);
 
     const task = await prisma.task.create({
       data: {
         title,
         description:
-          typeof data.description === "string"
-            ? data.description.trim()
-            : null,
+          typeof body.description === "string"
+            ? body.description
+            : "",
         status,
         priority,
-        ...(dueDate ? { dueDate } : {}),
+        dueDate,
         projectId: project.id,
         createdById: user.id,
       },
     });
 
     return NextResponse.json(
-      { task: serializeTask(task) },
+      { task: displayTask(task) },
       { status: 201 },
     );
   } catch (error) {
-    console.error("POST /api/tasks:", error);
+    console.error("POST /api/tasks failed:", error);
+
     return NextResponse.json(
-      { error: "Gagal membuat task." },
+      { error: "Gagal menyimpan task ke database." },
       { status: 500 },
     );
   }
