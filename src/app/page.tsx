@@ -3,10 +3,20 @@
 import { useMemo, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
+import {
+  getInitialWorkspaceData,
+  createTaskAction,
+  updateTaskStatusAction,
+  updateProjectNameAction,
+  deleteTaskAction,
+  updateTaskAction,
+} from "./actions";
 
 type Status = "To Do" | "In Progress" | "In Review";
-type Task = {
-  id: number;
+type ViewMode = "board" | "list" | "timeline";
+
+type TaskUI = {
+  id: string;
   title: string;
   description: string;
   status: Status;
@@ -18,74 +28,6 @@ type Task = {
   people: string[];
 };
 
-const initialTasks: Task[] = [
-  {
-    id: 1,
-    title: "New task",
-    description:
-      "Involves creating and assigning a new task within the project management system. The team can collaborate and track progress here.",
-    status: "To Do",
-    priority: "Medium",
-    date: "Oct 20, 2026",
-    progress: 0,
-    comments: 2,
-    files: 1,
-    people: ["NS", "AR"],
-  },
-  {
-    id: 2,
-    title: "Planning meeting for second option of the dashboard",
-    description:
-      "Focus on strategizing and outlining the development of the second option for the dashboard.",
-    status: "In Progress",
-    priority: "Medium",
-    date: "Oct 20, 2026",
-    progress: 65,
-    comments: 7,
-    files: 2,
-    people: ["NS", "MK"],
-  },
-  {
-    id: 3,
-    title: "Finish the ideation",
-    description:
-      "The team will conclude the ideation phase by finalizing and refining concepts that have been discussed.",
-    status: "In Progress",
-    priority: "High",
-    date: "Oct 22, 2026",
-    progress: 75,
-    comments: 34,
-    files: 12,
-    people: ["NS", "AR", "MK"],
-  },
-  {
-    id: 4,
-    title: "Preparation low-fidelity for mobile",
-    description:
-      "Involves creating low-fidelity wireframes specifically for the mobile version of the project.",
-    status: "In Progress",
-    priority: "Low",
-    date: "Oct 24, 2026",
-    progress: 30,
-    comments: 3,
-    files: 1,
-    people: ["AR", "MK"],
-  },
-  {
-    id: 5,
-    title: "Business model canvas of product",
-    description:
-      "Developing a comprehensive Business Model Canvas for the product, outlining the key components.",
-    status: "In Review",
-    priority: "Low",
-    date: "Oct 21, 2026",
-    progress: 90,
-    comments: 5,
-    files: 3,
-    people: ["NS", "MK"],
-  },
-];
-
 const columns: Status[] = ["To Do", "In Progress", "In Review"];
 const navItems = [
   { label: "Overview", icon: "grid" },
@@ -95,6 +37,37 @@ const navItems = [
   { label: "Calendar", icon: "calendar" },
   { label: "Settings", icon: "settings" },
 ];
+
+const teamMembers = [
+  { name: "Anisa Nabila", role: "Project Lead", initials: "AN", email: "anisa@orbit.app" },
+  { name: "Ahmad Rizky", role: "Frontend Developer", initials: "AR", email: "rizky@orbit.app" },
+  { name: "M. Kenzie", role: "UI/UX Designer", initials: "MK", email: "kenzie@orbit.app" },
+  { name: "Jasmine L.", role: "Backend Developer", initials: "JL", email: "jasmine@orbit.app" },
+];
+
+function statusDbToUi(status: string): Status {
+  if (status === "IN_PROGRESS") return "In Progress";
+  if (status === "IN_REVIEW") return "In Review";
+  return "To Do";
+}
+
+function statusUiToDb(status: Status): "TODO" | "IN_PROGRESS" | "IN_REVIEW" {
+  if (status === "In Progress") return "IN_PROGRESS";
+  if (status === "In Review") return "IN_REVIEW";
+  return "TODO";
+}
+
+function priorityDbToUi(priority: string): "Low" | "Medium" | "High" {
+  if (priority === "HIGH" || priority === "URGENT") return "High";
+  if (priority === "LOW") return "Low";
+  return "Medium";
+}
+
+function priorityUiToDb(priority: "Low" | "Medium" | "High"): "LOW" | "MEDIUM" | "HIGH" {
+  if (priority === "High") return "HIGH";
+  if (priority === "Low") return "LOW";
+  return "MEDIUM";
+}
 
 function Icon({ name, size = 18 }: { name: string; size?: number }) {
   const common = {
@@ -192,6 +165,12 @@ function Icon({ name, size = 18 }: { name: string; size?: number }) {
       </>
     ),
     spark: <path d="m12 2 1.7 7.3L21 12l-7.3 1.7L12 21l-1.7-7.3L3 12l7.3-2.7Z" />,
+    trash: (
+      <>
+        <path d="M3 6h18" />
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      </>
+    ),
   };
   return <svg {...common}>{paths[name] || paths.grid}</svg>;
 }
@@ -219,7 +198,8 @@ export default function Home() {
 
   const [dark, setDark] = useState(true);
   const [activeNav, setActiveNav] = useState("Projects");
-  const [tasks, setTasks] = useState<Task[]>(initialTasks);
+  const [tasks, setTasks] = useState<TaskUI[]>([]);
+  const [projectId, setProjectId] = useState<string>("");
   const [search, setSearch] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [newTitle, setNewTitle] = useState("");
@@ -229,10 +209,56 @@ export default function Home() {
   const [showFilters, setShowFilters] = useState(false);
   const [filter, setFilter] = useState("All priorities");
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [loadingData, setLoadingData] = useState(true);
 
+  // Status Interaktif Header Baru
+  const [viewMode, setViewMode] = useState<ViewMode>("board");
+  const [isPrivate, setIsPrivate] = useState(true);
+  const [showViewDropdown, setShowViewDropdown] = useState(false);
+  const [showMembersModal, setShowMembersModal] = useState(false);
+  const [showCalendarModal, setShowCalendarModal] = useState(false);
+
+  // State Modal Detail Task
+  const [activeTask, setActiveTask] = useState<TaskUI | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editDesc, setEditDesc] = useState("");
+  const [editPriority, setEditPriority] = useState<"Low" | "Medium" | "High">("Medium");
+
+  // Load Data Asli dari Database
   useEffect(() => {
     if (!isPending && !session) {
       router.push("/login");
+      return;
+    }
+
+    if (session) {
+      getInitialWorkspaceData()
+        .then((res) => {
+          setProject(res.project.name);
+          setProjectId(res.project.id);
+
+          const formattedTasks: TaskUI[] = res.tasks.map((t) => ({
+            id: t.id,
+            title: t.title,
+            description: t.description || "",
+            status: statusDbToUi(t.status),
+            priority: priorityDbToUi(t.priority),
+            date: new Date(t.createdAt).toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+            }),
+            progress: t.progress,
+            comments: t.commentCount,
+            files: t.fileCount,
+            people:
+              t.people.length > 0 ? t.people : [getInitials(session.user.name)],
+          }));
+
+          setTasks(formattedTasks);
+        })
+        .catch((err) => console.error("Gagal mengambil data workspace:", err))
+        .finally(() => setLoadingData(false));
     }
   }, [isPending, session, router]);
 
@@ -252,36 +278,129 @@ export default function Home() {
     [tasks, search, filter]
   );
 
-  function addTask(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    if (!newTitle.trim()) return;
-    setTasks((old) => [
-      ...old,
-      {
-        id: Date.now(),
-        title: newTitle.trim(),
-        description:
-          "Add a description to keep the team aligned on the next steps.",
-        status: newStatus,
-        priority: "Medium",
-        date: "Oct 26, 2026",
-        progress: 0,
-        comments: 0,
-        files: 0,
-        people: [userInitials],
-      },
-    ]);
-    setNewTitle("");
-    setShowForm(false);
+  // Buka Modal Detail Task
+  function openTaskDetail(task: TaskUI) {
+    setActiveTask(task);
+    setEditTitle(task.title);
+    setEditDesc(task.description);
+    setEditPriority(task.priority);
   }
 
-  function moveTask(id: number, status: Status) {
+  // Simpan Perubahan Task dari Modal
+  async function handleSaveTaskDetail() {
+    if (!activeTask || !editTitle.trim()) return;
+
+    const taskId = activeTask.id;
+    const updatedFields = {
+      title: editTitle.trim(),
+      description: editDesc.trim(),
+      priority: editPriority,
+    };
+
     setTasks((old) =>
-      old.map((t) => (t.id === id ? { ...t, status } : t))
+      old.map((t) => (t.id === taskId ? { ...t, ...updatedFields } : t))
     );
+
+    setActiveTask(null);
+
+    try {
+      await updateTaskAction(taskId, {
+        title: updatedFields.title,
+        description: updatedFields.description,
+        priority: priorityUiToDb(updatedFields.priority),
+      });
+    } catch (error) {
+      console.error("Gagal menyimpan detail task:", error);
+    }
   }
 
-  if (isPending || !session) {
+  // Hapus Task dari DB & UI
+  async function handleDeleteTask(taskId: string, e?: React.MouseEvent) {
+    if (e) e.stopPropagation();
+
+    if (!confirm("Apakah Anda yakin ingin menghapus task ini?")) return;
+
+    setTasks((old) => old.filter((t) => t.id !== taskId));
+    if (activeTask?.id === taskId) setActiveTask(null);
+
+    try {
+      await deleteTaskAction(taskId);
+    } catch (error) {
+      console.error("Gagal menghapus task:", error);
+    }
+  }
+
+  // Tambah Task Baru
+  async function addTask(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!newTitle.trim() || !projectId) return;
+
+    const dbStatus = statusUiToDb(newStatus);
+
+    try {
+      const createdTask = await createTaskAction({
+        title: newTitle.trim(),
+        projectId: projectId,
+        status: dbStatus,
+        priority: "MEDIUM",
+      });
+
+      const newTaskUI: TaskUI = {
+        id: createdTask.id,
+        title: createdTask.title,
+        description: createdTask.description || "",
+        status: statusDbToUi(createdTask.status),
+        priority: priorityDbToUi(createdTask.priority),
+        date: new Date(createdTask.createdAt).toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        }),
+        progress: createdTask.progress,
+        comments: createdTask.commentCount,
+        files: createdTask.fileCount,
+        people: createdTask.people,
+      };
+
+      setTasks((old) => [...old, newTaskUI]);
+      setNewTitle("");
+      setShowForm(false);
+    } catch (error) {
+      console.error("Gagal menambah task:", error);
+    }
+  }
+
+  // Pindah Status Task
+  async function moveTask(id: string, newStatus: Status, e?: React.MouseEvent) {
+    if (e) e.stopPropagation();
+    const dbStatus = statusUiToDb(newStatus);
+
+    setTasks((old) =>
+      old.map((t) => (t.id === id ? { ...t, status: newStatus } : t))
+    );
+
+    try {
+      await updateTaskStatusAction(id, dbStatus);
+    } catch (error) {
+      console.error("Gagal mengubah status task:", error);
+    }
+  }
+
+  // Rename Project Name
+  async function handleRenameProject() {
+    const name = window.prompt("Project name", project);
+    if (name?.trim() && name.trim() !== project && projectId) {
+      const trimmedName = name.trim();
+      setProject(trimmedName);
+      try {
+        await updateProjectNameAction(projectId, trimmedName);
+      } catch (error) {
+        console.error("Gagal mengubah nama project:", error);
+      }
+    }
+  }
+
+  if (isPending || loadingData) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[#242628] text-white">
         <div className="flex flex-col items-center gap-3">
@@ -500,7 +619,7 @@ export default function Home() {
               <Avatar initials={userInitials} />
               <button
                 className="invite-button"
-                onClick={() => alert("Invite link sharing will be available soon.")}
+                onClick={() => setShowMembersModal(true)}
               >
                 <Icon name="plus" size={15} /> Invite members
               </button>
@@ -510,13 +629,11 @@ export default function Home() {
               <div className="notification-pop">
                 <strong>Notifications</strong>
                 <p>
-                  <span className="notice-dot" /> Your team workspace is up to
-                  date.
+                  <span className="notice-dot" /> Your team workspace is up to date.
                 </p>
                 <p>
                   <span className="notice-dot notice-purple" />{" "}
-                  {tasks.filter((t) => t.status === "In Progress").length} tasks
-                  are currently in progress.
+                  {tasks.filter((t) => t.status === "In Progress").length} tasks are currently in progress.
                 </p>
                 <button onClick={() => setShowNotifications(false)}>
                   Mark as read
@@ -532,10 +649,7 @@ export default function Home() {
                 <button
                   className="edit-title"
                   title="Rename project"
-                  onClick={() => {
-                    const name = window.prompt("Project name", project);
-                    if (name?.trim()) setProject(name.trim());
-                  }}
+                  onClick={handleRenameProject}
                 >
                   ↗
                 </button>
@@ -543,33 +657,82 @@ export default function Home() {
               <p className="project-subtitle">
                 Plan, collaborate, and ship great work together.
               </p>
+              
+              {/* Member Line Interaktif */}
               <div className="member-line">
-                <div className="avatar-stack">
+                <div
+                  className="avatar-stack cursor-pointer hover:opacity-80 transition"
+                  onClick={() => setShowMembersModal(true)}
+                  title="View project members"
+                >
                   <Avatar initials={userInitials} index={0} />
                   <Avatar initials="AR" index={1} />
                   <Avatar initials="MK" index={2} />
                   <Avatar initials="JL" index={3} />
                 </div>
-                <span className="more-members">+3</span>
-                <span className="private-label">
-                  <Icon name="lock" size={13} /> Private
+                <span
+                  className="more-members cursor-pointer hover:text-white transition"
+                  onClick={() => setShowMembersModal(true)}
+                >
+                  +{teamMembers.length}
                 </span>
-                <span className="toggle-pill">
+
+                {/* Switch Private / Public Interaktif */}
+                <span className="private-label">
+                  <Icon name="lock" size={13} /> {isPrivate ? "Private" : "Public"}
+                </span>
+                <span
+                  className={`toggle-pill cursor-pointer transition ${isPrivate ? "active" : ""}`}
+                  onClick={() => setIsPrivate(!isPrivate)}
+                  title={`Click to switch to ${isPrivate ? "Public" : "Private"}`}
+                >
                   <i />
                 </span>
               </div>
             </div>
 
             <div className="heading-actions">
-              <button className="square-button" title="Calendar">
+              {/* Tombol Kalender */}
+              <button
+                className="square-button hover:bg-[#35383a] transition"
+                title="View Calendar"
+                onClick={() => setShowCalendarModal(true)}
+              >
                 <Icon name="calendar" />
               </button>
-              <button className="view-select">
-                Board <Icon name="chevron" size={14} />
-              </button>
+
+              {/* View Dropdown Selection */}
+              <div className="relative">
+                <button
+                  className="view-select hover:bg-[#35383a] transition flex items-center gap-1 capitalize"
+                  onClick={() => setShowViewDropdown(!showViewDropdown)}
+                >
+                  {viewMode} view <Icon name="chevron" size={14} />
+                </button>
+
+                {showViewDropdown && (
+                  <div className="absolute right-0 top-11 z-30 w-36 rounded-xl border border-[var(--line)] bg-[var(--card)] p-1.5 shadow-xl text-xs text-white">
+                    {(["board", "list", "timeline"] as ViewMode[]).map((mode) => (
+                      <button
+                        key={mode}
+                        onClick={() => {
+                          setViewMode(mode);
+                          setShowViewDropdown(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 rounded-lg capitalize transition ${
+                          viewMode === mode ? "bg-violet-600 font-semibold" : "hover:bg-[#35383a]"
+                        }`}
+                      >
+                        {mode} view
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <button
-                className="square-button"
-                title="Filter"
+                className="square-button hover:bg-[#35383a] transition"
+                title="Filter tasks"
                 onClick={() => setShowFilters(!showFilters)}
               >
                 <Icon name="filter" />
@@ -642,11 +805,28 @@ export default function Home() {
           )}
 
           <div className="board-toolbar">
+            {/* Tab View Selection Interaktif */}
             <div className="board-tabs">
-              <button className="board-tab-active">Board view</button>
-              <button>List view</button>
-              <button>Timeline</button>
+              <button
+                className={viewMode === "board" ? "board-tab-active" : ""}
+                onClick={() => setViewMode("board")}
+              >
+                Board view
+              </button>
+              <button
+                className={viewMode === "list" ? "board-tab-active" : ""}
+                onClick={() => setViewMode("list")}
+              >
+                List view
+              </button>
+              <button
+                className={viewMode === "timeline" ? "board-tab-active" : ""}
+                onClick={() => setViewMode("timeline")}
+              >
+                Timeline
+              </button>
             </div>
+
             <div className="board-tools">
               <label className="board-search">
                 <Icon name="search" size={15} />
@@ -656,7 +836,10 @@ export default function Home() {
                   onChange={(e) => setSearch(e.target.value)}
                 />
               </label>
-              <div className="board-avatars">
+              <div
+                className="board-avatars cursor-pointer hover:opacity-80 transition"
+                onClick={() => setShowMembersModal(true)}
+              >
                 <Avatar initials={userInitials} />
                 <Avatar initials="AR" index={1} />
                 <Avatar initials="MK" index={2} />
@@ -671,190 +854,292 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="kanban-board">
-            {columns.map((column, ci) => {
-              const list = filteredTasks.filter((t) => t.status === column);
-              return (
-                <section className="kanban-column" key={column}>
-                  <div className="column-heading">
-                    <div className="column-name">
-                      <span className={`column-indicator indicator-${ci}`} />
-                      <h2>{column}</h2>
-                      <span className="column-count">{list.length}</span>
-                    </div>
-                    <div className="column-controls">
-                      <button
-                        title="Add task"
-                        onClick={() => {
-                          setNewStatus(column);
-                          setShowForm(true);
-                        }}
-                      >
-                        <Icon name="plus" size={17} />
-                      </button>
-                      <button title="Column options">
-                        <Icon name="more" size={17} />
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="task-stack">
-                    {list.map((task, ti) => (
-                      <article
-                        className={`task-card ${
-                          ti === 0 && ci !== 1 ? "task-card-feature" : ""
-                        }`}
-                        key={task.id}
-                      >
-                        {task.id === 1 && (
-                          <div className="task-illustration">
-                            <div className="illustration-window">
-                              <div className="window-dots">
-                                <i />
-                                <i />
-                                <i />
-                              </div>
-                              <div className="wire-card wire-a" />
-                              <div className="wire-card wire-b" />
-                              <div className="wire-card wire-c" />
-                              <div className="wire-lines">
-                                <i />
-                                <i />
-                                <i />
-                              </div>
-                              <div className="wire-button">
-                                <Icon name="plus" size={13} />
-                              </div>
-                            </div>
-                            <span className="art-cursor">↖</span>
-                          </div>
-                        )}
-
-                        {task.id === 5 && (
-                          <div className="canvas-art">
-                            <div className="canvas-diamond diamond-one" />
-                            <div className="canvas-diamond diamond-two" />
-                            <div className="canvas-node node-one">◎</div>
-                            <div className="canvas-node node-two">✤</div>
-                            <div className="canvas-node node-three">♟</div>
-                            <div className="canvas-node node-four">▤</div>
-                            <div className="canvas-connect connect-one" />
-                            <div className="canvas-connect connect-two" />
-                            <div className="canvas-connect connect-three" />
-                          </div>
-                        )}
-
-                        <div className="task-meta">
-                          <span
-                            className={`priority priority-${task.priority.toLowerCase()}`}
-                          >
-                            {task.priority}
-                          </span>
-                          <span className="date-chip">
-                            <Icon name="calendar" size={12} />
-                            {task.date}
-                          </span>
-                          <button
-                            className="card-more"
-                            title="Task options"
-                          >
-                            <Icon name="more" size={16} />
-                          </button>
-                        </div>
-
-                        <h3>{task.title}</h3>
-                        <p className="task-description">{task.description}</p>
-
-                        {task.progress > 0 && (
-                          <div className="progress-wrap">
-                            <div
-                              className={`progress-track progress-${task.priority.toLowerCase()}`}
-                            >
-                              <i style={{ width: `${task.progress}%` }} />
-                            </div>
-                            <span>{task.progress}%</span>
-                          </div>
-                        )}
-
-                        <div className="task-card-footer">
-                          <div className="task-avatars">
-                            {task.people.map((person, i) => (
-                              <Avatar
-                                key={person + i}
-                                initials={person}
-                                index={i}
-                              />
-                            ))}
-                          </div>
-                          <div className="task-stats">
-                            <span>
-                              <Icon name="paperclip" size={13} />
-                              {task.files}
-                            </span>
-                            <span>
-                              <Icon name="comment" size={13} />
-                              {task.comments}
-                            </span>
-                            <button
-                              title="Mark complete"
-                              onClick={() =>
-                                moveTask(
-                                  task.id,
-                                  task.status === "In Review"
-                                    ? "To Do"
-                                    : "In Review"
-                                )
-                              }
-                            >
-                              <Icon name="check" size={14} />
-                            </button>
-                          </div>
-                        </div>
-
-                        <div className="card-move">
-                          <span>Move to</span>
-                          {columns
-                            .filter((c) => c !== task.status)
-                            .map((c) => (
-                              <button
-                                key={c}
-                                onClick={() => moveTask(task.id, c)}
-                              >
-                                {c}
-                              </button>
-                            ))}
-                        </div>
-                      </article>
-                    ))}
-
-                    {list.length === 0 && (
-                      <div className="empty-column">
-                        No tasks here yet.
+          {/* TAMPILAN 1: KANBAN BOARD VIEW */}
+          {viewMode === "board" && (
+            <div className="kanban-board">
+              {columns.map((column, ci) => {
+                const list = filteredTasks.filter((t) => t.status === column);
+                return (
+                  <section className="kanban-column" key={column}>
+                    <div className="column-heading">
+                      <div className="column-name">
+                        <span className={`column-indicator indicator-${ci}`} />
+                        <h2>{column}</h2>
+                        <span className="column-count">{list.length}</span>
+                      </div>
+                      <div className="column-controls">
                         <button
+                          title="Add task"
                           onClick={() => {
                             setNewStatus(column);
                             setShowForm(true);
                           }}
                         >
-                          <Icon name="plus" size={14} /> Add a task
+                          <Icon name="plus" size={17} />
+                        </button>
+                        <button title="Column options">
+                          <Icon name="more" size={17} />
                         </button>
                       </div>
-                    )}
+                    </div>
 
-                    <button
-                      className="column-add"
-                      onClick={() => {
-                        setNewStatus(column);
-                        setShowForm(true);
-                      }}
-                    >
-                      <Icon name="plus" size={16} /> Add task
-                    </button>
+                    <div className="task-stack">
+                      {list.map((task, ti) => (
+                        <article
+                          className={`task-card cursor-pointer transition hover:border-violet-500/50 ${
+                            ti === 0 && ci !== 1 ? "task-card-feature" : ""
+                          }`}
+                          key={task.id}
+                          onClick={() => openTaskDetail(task)}
+                        >
+                          {task.title === "New task" && (
+                            <div className="task-illustration">
+                              <div className="illustration-window">
+                                <div className="window-dots">
+                                  <i />
+                                  <i />
+                                  <i />
+                                </div>
+                                <div className="wire-card wire-a" />
+                                <div className="wire-card wire-b" />
+                                <div className="wire-card wire-c" />
+                                <div className="wire-lines">
+                                  <i />
+                                  <i />
+                                  <i />
+                                </div>
+                                <div className="wire-button">
+                                  <Icon name="plus" size={13} />
+                                </div>
+                              </div>
+                              <span className="art-cursor">↖</span>
+                            </div>
+                          )}
+
+                          {task.title === "Business model canvas of product" && (
+                            <div className="canvas-art">
+                              <div className="canvas-diamond diamond-one" />
+                              <div className="canvas-diamond diamond-two" />
+                              <div className="canvas-node node-one">◎</div>
+                              <div className="canvas-node node-two">✤</div>
+                              <div className="canvas-node node-three">♟</div>
+                              <div className="canvas-node node-four">▤</div>
+                              <div className="canvas-connect connect-one" />
+                              <div className="canvas-connect connect-two" />
+                              <div className="canvas-connect connect-three" />
+                            </div>
+                          )}
+
+                          <div className="task-meta">
+                            <span
+                              className={`priority priority-${task.priority.toLowerCase()}`}
+                            >
+                              {task.priority}
+                            </span>
+                            <span className="date-chip">
+                              <Icon name="calendar" size={12} />
+                              {task.date}
+                            </span>
+                            <button
+                              className="card-more hover:text-red-400"
+                              title="Delete task"
+                              onClick={(e) => handleDeleteTask(task.id, e)}
+                            >
+                              <Icon name="trash" size={15} />
+                            </button>
+                          </div>
+
+                          <h3>{task.title}</h3>
+                          <p className="task-description">{task.description}</p>
+
+                          {task.progress > 0 && (
+                            <div className="progress-wrap">
+                              <div
+                                className={`progress-track progress-${task.priority.toLowerCase()}`}
+                              >
+                                <i style={{ width: `${task.progress}%` }} />
+                              </div>
+                              <span>{task.progress}%</span>
+                            </div>
+                          )}
+
+                          <div className="task-card-footer">
+                            <div className="task-avatars">
+                              {task.people.map((person, i) => (
+                                <Avatar
+                                  key={person + i}
+                                  initials={person}
+                                  index={i}
+                                />
+                              ))}
+                            </div>
+                            <div className="task-stats">
+                              <span>
+                                <Icon name="paperclip" size={13} />
+                                {task.files}
+                              </span>
+                              <span>
+                                <Icon name="comment" size={13} />
+                                {task.comments}
+                              </span>
+                              <button
+                                title="Mark complete"
+                                onClick={(e) =>
+                                  moveTask(
+                                    task.id,
+                                    task.status === "In Review"
+                                      ? "To Do"
+                                      : "In Review",
+                                    e
+                                  )
+                                }
+                              >
+                                <Icon name="check" size={14} />
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="card-move">
+                            <span>Move to</span>
+                            {columns
+                              .filter((c) => c !== task.status)
+                              .map((c) => (
+                                <button
+                                  key={c}
+                                  onClick={(e) => moveTask(task.id, c, e)}
+                                >
+                                  {c}
+                                </button>
+                              ))}
+                          </div>
+                        </article>
+                      ))}
+
+                      {list.length === 0 && (
+                        <div className="empty-column">
+                          No tasks here yet.
+                          <button
+                            onClick={() => {
+                              setNewStatus(column);
+                              setShowForm(true);
+                            }}
+                          >
+                            <Icon name="plus" size={14} /> Add a task
+                          </button>
+                        </div>
+                      )}
+
+                      <button
+                        className="column-add"
+                        onClick={() => {
+                          setNewStatus(column);
+                          setShowForm(true);
+                        }}
+                      >
+                        <Icon name="plus" size={16} /> Add task
+                      </button>
+                    </div>
+                  </section>
+                );
+              })}
+            </div>
+          )}
+
+          {/* TAMPILAN 2: LIST VIEW TABEL */}
+          {viewMode === "list" && (
+            <div className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-4 text-white">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-[var(--line)] text-xs text-gray-400 uppercase tracking-wider">
+                      <th className="py-3 px-4">Task Name</th>
+                      <th className="py-3 px-4">Status</th>
+                      <th className="py-3 px-4">Priority</th>
+                      <th className="py-3 px-4">Date</th>
+                      <th className="py-3 px-4">Assignee</th>
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--line)]">
+                    {filteredTasks.map((t) => (
+                      <tr
+                        key={t.id}
+                        onClick={() => openTaskDetail(t)}
+                        className="cursor-pointer hover:bg-[#35383a]/50 transition"
+                      >
+                        <td className="py-3.5 px-4 font-medium">{t.title}</td>
+                        <td className="py-3.5 px-4">
+                          <span className="rounded-full px-2.5 py-1 text-xs font-semibold bg-[#35383a] text-violet-300">
+                            {t.status}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <span
+                            className={`priority priority-${t.priority.toLowerCase()}`}
+                          >
+                            {t.priority}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 text-xs text-gray-400">{t.date}</td>
+                        <td className="py-3.5 px-4">
+                          <div className="flex -space-x-1">
+                            {t.people.map((p, i) => (
+                              <Avatar key={p + i} initials={p} index={i} />
+                            ))}
+                          </div>
+                        </td>
+                        <td className="py-3.5 px-4 text-right">
+                          <button
+                            onClick={(e) => handleDeleteTask(t.id, e)}
+                            className="p-1.5 text-gray-400 hover:text-red-400 transition"
+                          >
+                            <Icon name="trash" size={15} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {filteredTasks.length === 0 && (
+                      <tr>
+                        <td colSpan={6} className="py-8 text-center text-gray-400">
+                          No tasks match your search or filters.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* TAMPILAN 3: TIMELINE VIEW */}
+          {viewMode === "timeline" && (
+            <div className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6 text-white space-y-4">
+              <div className="flex items-center justify-between pb-4 border-b border-[var(--line)]">
+                <h3 className="text-sm font-semibold text-gray-300">Project Timeline Roadmap</h3>
+                <span className="text-xs text-gray-400">2026 Schedule</span>
+              </div>
+              <div className="space-y-4">
+                {filteredTasks.map((t, index) => (
+                  <div
+                    key={t.id}
+                    onClick={() => openTaskDetail(t)}
+                    className="p-3 rounded-xl border border-[var(--line)] bg-[#1e2022] hover:border-violet-500/50 cursor-pointer transition"
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <strong className="text-sm">{t.title}</strong>
+                      <span className="text-xs text-gray-400">{t.date}</span>
+                    </div>
+                    <div className="w-full bg-[#35383a] h-2.5 rounded-full overflow-hidden">
+                      <div
+                        className="bg-violet-500 h-full rounded-full transition-all duration-500"
+                        style={{ width: `${t.progress || (index + 1) * 20}%` }}
+                      />
+                    </div>
                   </div>
-                </section>
-              );
-            })}
-          </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <footer className="app-footer">
             <span>© 2026 Orbit Workspace</span>
@@ -864,6 +1149,164 @@ export default function Home() {
           </footer>
         </section>
       </div>
+
+      {/* Modal Popup Detail Task */}
+      {activeTask && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6 shadow-2xl text-white">
+            <div className="flex items-center justify-between pb-4 border-b border-[var(--line)]">
+              <span className="text-xs uppercase tracking-wider text-gray-400 font-semibold">
+                Task Details
+              </span>
+              <button
+                onClick={() => setActiveTask(null)}
+                className="text-gray-400 hover:text-white text-lg font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-4">
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Title</label>
+                <input
+                  type="text"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  className="w-full rounded-xl border border-[var(--line)] bg-[#1e2022] px-3 py-2 text-sm text-white focus:outline-none focus:border-violet-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Description</label>
+                <textarea
+                  rows={4}
+                  value={editDesc}
+                  onChange={(e) => setEditDesc(e.target.value)}
+                  className="w-full rounded-xl border border-[var(--line)] bg-[#1e2022] px-3 py-2 text-sm text-white focus:outline-none focus:border-violet-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Priority</label>
+                <select
+                  value={editPriority}
+                  onChange={(e) =>
+                    setEditPriority(e.target.value as "Low" | "Medium" | "High")
+                  }
+                  className="w-full rounded-xl border border-[var(--line)] bg-[#1e2022] px-3 py-2 text-sm text-white focus:outline-none focus:border-violet-500"
+                >
+                  <option value="Low">Low</option>
+                  <option value="Medium">Medium</option>
+                  <option value="High">High</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="mt-6 flex items-center justify-between pt-4 border-t border-[var(--line)]">
+              <button
+                type="button"
+                onClick={() => handleDeleteTask(activeTask.id)}
+                className="flex items-center gap-1.5 text-xs text-red-400 hover:text-red-300 font-medium transition"
+              >
+                <Icon name="trash" size={14} /> Delete Task
+              </button>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTask(null)}
+                  className="px-4 py-2 rounded-xl text-xs text-gray-300 hover:bg-[#35383a] transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveTaskDetail}
+                  className="px-4 py-2 rounded-xl bg-violet-600 text-xs text-white font-medium hover:bg-violet-500 transition"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Popup Team Members */}
+      {showMembersModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6 shadow-2xl text-white">
+            <div className="flex items-center justify-between pb-4 border-b border-[var(--line)]">
+              <strong className="text-sm font-semibold">Project Members</strong>
+              <button
+                onClick={() => setShowMembersModal(false)}
+                className="text-gray-400 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="mt-4 space-y-3">
+              {teamMembers.map((m, idx) => (
+                <div
+                  key={m.email}
+                  className="flex items-center justify-between p-2.5 rounded-xl bg-[#1e2022] border border-[var(--line)]"
+                >
+                  <div className="flex items-center gap-3">
+                    <Avatar initials={m.initials} index={idx} />
+                    <div>
+                      <strong className="block text-xs font-semibold">{m.name}</strong>
+                      <span className="text-[10px] text-gray-400">{m.email}</span>
+                    </div>
+                  </div>
+                  <span className="text-[10px] rounded-md bg-[#35383a] px-2 py-1 text-violet-300">
+                    {m.role}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={() => setShowMembersModal(false)}
+              className="mt-6 w-full py-2.5 rounded-xl bg-violet-600 text-xs text-white font-semibold hover:bg-violet-500 transition"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Popup Calendar View */}
+      {showCalendarModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6 shadow-2xl text-white">
+            <div className="flex items-center justify-between pb-4 border-b border-[var(--line)]">
+              <strong className="text-sm font-semibold">Project Calendar Schedule</strong>
+              <button
+                onClick={() => setShowCalendarModal(false)}
+                className="text-gray-400 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="mt-4 text-xs text-gray-300 space-y-3">
+              <div className="p-3 rounded-xl bg-[#1e2022] border border-[var(--line)]">
+                <span className="font-semibold text-violet-400 block mb-1">Today's Deadlines</span>
+                <p>• Planning meeting for dashboard (In Progress)</p>
+                <p>• Business model canvas review (In Review)</p>
+              </div>
+              <p className="text-center text-gray-400 text-[11px] pt-2">
+                Calendar integration active with PostgreSQL date stamps.
+              </p>
+            </div>
+            <button
+              onClick={() => setShowCalendarModal(false)}
+              className="mt-6 w-full py-2.5 rounded-xl bg-violet-600 text-xs text-white font-semibold hover:bg-violet-500 transition"
+            >
+              Close Calendar
+            </button>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
