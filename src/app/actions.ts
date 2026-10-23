@@ -7,62 +7,41 @@ import { prisma } from "@/lib/prisma";
 type TaskStatusType = "TODO" | "IN_PROGRESS" | "IN_REVIEW" | "DONE";
 type TaskPriorityType = "LOW" | "MEDIUM" | "HIGH" | "URGENT";
 
-// Data dummy dari UI kamu yang akan dipindahkan jadi data asli di Database
-const defaultInitialTasks = [
+const defaultProjects = [
   {
-    title: "New task",
-    description:
-      "Involves creating and assigning a new task within the project management system. The team can collaborate and track progress here.",
-    status: "TODO" as TaskStatusType,
-    priority: "MEDIUM" as TaskPriorityType,
-    progress: 0,
-    commentCount: 2,
-    fileCount: 1,
-    people: ["NS", "AR"],
+    name: "Orbit Workspace",
+    description: "Plan, collaborate, and ship great work together.",
+    tasks: [
+      { title: "New task", description: "Involves creating and assigning a new task.", status: "TODO" as TaskStatusType, priority: "MEDIUM" as TaskPriorityType, progress: 0, commentCount: 2, fileCount: 1, people: ["NS", "AR"] },
+      { title: "Planning meeting for second option of the dashboard", description: "Focus on strategizing option 2.", status: "IN_PROGRESS" as TaskStatusType, priority: "MEDIUM" as TaskPriorityType, progress: 65, commentCount: 7, fileCount: 2, people: ["NS", "MK"] },
+      { title: "Finish the ideation", description: "Conclude ideation phase.", status: "IN_PROGRESS" as TaskStatusType, priority: "HIGH" as TaskPriorityType, progress: 75, commentCount: 34, fileCount: 12, people: ["NS", "AR", "MK"] },
+      { title: "Preparation low-fidelity for mobile", description: "Wireframes for mobile view.", status: "IN_PROGRESS" as TaskStatusType, priority: "LOW" as TaskPriorityType, progress: 30, commentCount: 3, fileCount: 1, people: ["AR", "MK"] },
+      { title: "Business model canvas of product", description: "Outlining business canvas.", status: "IN_REVIEW" as TaskStatusType, priority: "LOW" as TaskPriorityType, progress: 90, commentCount: 5, fileCount: 3, people: ["NS", "MK"] },
+    ],
   },
   {
-    title: "Planning meeting for second option of the dashboard",
-    description:
-      "Focus on strategizing and outlining the development of the second option for the dashboard.",
-    status: "IN_PROGRESS" as TaskStatusType,
-    priority: "MEDIUM" as TaskPriorityType,
-    progress: 65,
-    commentCount: 7,
-    fileCount: 2,
-    people: ["NS", "MK"],
+    name: "Website Redesign",
+    description: "Revamping core landing page and design system.",
+    tasks: [
+      { title: "Hero section wireframe", description: "Create high-converting hero layout.", status: "TODO" as TaskStatusType, priority: "HIGH" as TaskPriorityType, progress: 10, commentCount: 4, fileCount: 2, people: ["AN", "AR"] },
+      { title: "Optimize image assets", description: "Compress Next.js WebP images.", status: "IN_PROGRESS" as TaskStatusType, priority: "MEDIUM" as TaskPriorityType, progress: 50, commentCount: 2, fileCount: 5, people: ["JL"] },
+      { title: "SEO meta tags setup", description: "Add OpenGraph metadata.", status: "IN_REVIEW" as TaskStatusType, priority: "LOW" as TaskPriorityType, progress: 95, commentCount: 1, fileCount: 0, people: ["MK"] },
+    ],
   },
   {
-    title: "Finish the ideation",
-    description:
-      "The team will conclude the ideation phase by finalizing and refining concepts that have been discussed.",
-    status: "IN_PROGRESS" as TaskStatusType,
-    priority: "HIGH" as TaskPriorityType,
-    progress: 75,
-    commentCount: 34,
-    fileCount: 12,
-    people: ["NS", "AR", "MK"],
+    name: "Mobile App UI",
+    description: "iOS and Android native UI component library.",
+    tasks: [
+      { title: "Dark mode color tokens", description: "Define tailwind color variables.", status: "TODO" as TaskStatusType, priority: "MEDIUM" as TaskPriorityType, progress: 20, commentCount: 3, fileCount: 1, people: ["MK", "AR"] },
+      { title: "Bottom sheet navigation", description: "Build smooth drawer component.", status: "IN_PROGRESS" as TaskStatusType, priority: "HIGH" as TaskPriorityType, progress: 60, commentCount: 8, fileCount: 3, people: ["AN"] },
+    ],
   },
   {
-    title: "Preparation low-fidelity for mobile",
-    description:
-      "Involves creating low-fidelity wireframes specifically for the mobile version of the project.",
-    status: "IN_PROGRESS" as TaskStatusType,
-    priority: "LOW" as TaskPriorityType,
-    progress: 30,
-    commentCount: 3,
-    fileCount: 1,
-    people: ["AR", "MK"],
-  },
-  {
-    title: "Business model canvas of product",
-    description:
-      "Developing a comprehensive Business Model Canvas for the product, outlining the key components.",
-    status: "IN_REVIEW" as TaskStatusType,
-    priority: "LOW" as TaskPriorityType,
-    progress: 90,
-    commentCount: 5,
-    fileCount: 3,
-    people: ["NS", "MK"],
+    name: "Marketing Campaign",
+    description: "Q4 product launch and social growth strategy.",
+    tasks: [
+      { title: "Product Hunt teaser page", description: "Design launch page graphic.", status: "IN_PROGRESS" as TaskStatusType, priority: "HIGH" as TaskPriorityType, progress: 40, commentCount: 12, fileCount: 4, people: ["JL", "NS"] },
+    ],
   },
 ];
 
@@ -71,132 +50,96 @@ export async function getInitialWorkspaceData() {
     headers: await headers(),
   });
 
-  if (!session) {
-    throw new Error("Unauthorized");
-  }
+  if (!session) throw new Error("Unauthorized");
 
-  // 1. Ambil atau Buat Workspace milik user
   let workspace = await prisma.workspace.findFirst({
-    where: {
-      memberships: {
-        some: {
-          userId: session.user.id,
-        },
-      },
-    },
+    where: { memberships: { some: { userId: session.user.id } } },
     include: {
       projects: {
-        include: {
-          tasks: {
-            orderBy: { createdAt: "asc" },
-          },
-        },
+        include: { tasks: { orderBy: { createdAt: "asc" } } },
+        orderBy: { createdAt: "asc" },
       },
     },
   });
 
   if (!workspace) {
-    const slug = `workspace-${Date.now()}`;
     workspace = await prisma.workspace.create({
       data: {
         name: `${session.user.name}'s Workspace`,
-        slug: slug,
+        slug: `workspace-${Date.now()}`,
         ownerId: session.user.id,
-        memberships: {
-          create: {
-            userId: session.user.id,
-            role: "OWNER",
-          },
-        },
-        projects: {
-          create: {
-            name: "Orbit Workspace",
-            description: "Plan, collaborate, and ship great work together.",
-          },
-        },
+        memberships: { create: { userId: session.user.id, role: "OWNER" } },
       },
       include: {
         projects: {
-          include: {
+          include: { tasks: { orderBy: { createdAt: "asc" } } },
+          orderBy: { createdAt: "asc" },
+        },
+      },
+    });
+  }
+
+  // Auto-seed projek default jika projek di database kurang dari 4
+  if (workspace.projects.length < 4) {
+    for (const projData of defaultProjects) {
+      const exists = workspace.projects.some((p) => p.name === projData.name);
+      if (!exists) {
+        await prisma.project.create({
+          data: {
+            name: projData.name,
+            description: projData.description,
+            workspaceId: workspace.id,
             tasks: {
-              orderBy: { createdAt: "asc" },
+              createMany: {
+                data: projData.tasks.map((t) => ({
+                  ...t,
+                  createdById: session.user.id,
+                })),
+              },
             },
           },
-        },
-      },
-    });
-  }
-
-  let project = workspace.projects[0];
-  if (!project) {
-    project = await prisma.project.create({
-      data: {
-        name: "Orbit Workspace",
-        description: "Plan, collaborate, and ship great work together.",
-        workspaceId: workspace.id,
-      },
-      include: {
-        tasks: {
-          orderBy: { createdAt: "asc" },
-        },
-      },
-    });
-  }
-
-  // 2. Jika project belum punya data, isi otomatis dengan 5 Data Dummy UI ke DB
-  if (!project.tasks || project.tasks.length === 0) {
-    await prisma.task.createMany({
-      data: defaultInitialTasks.map((task) => ({
-        ...task,
-        projectId: project.id,
-        createdById: session.user.id,
-      })),
-    });
-
-    const updatedProject = await prisma.project.findUnique({
-      where: { id: project.id },
-      include: {
-        tasks: {
-          orderBy: { createdAt: "asc" },
-        },
-      },
-    });
-
-    if (updatedProject) {
-      project = updatedProject;
+        });
+      }
     }
+
+    workspace = (await prisma.workspace.findUnique({
+      where: { id: workspace.id },
+      include: {
+        projects: {
+          include: { tasks: { orderBy: { createdAt: "asc" } } },
+          orderBy: { createdAt: "asc" },
+        },
+      },
+    }))!;
   }
+
+  const activeProject = workspace.projects[0];
 
   return {
     user: session.user,
     workspace,
-    project,
-    tasks: project.tasks,
+    project: activeProject,
+    tasks: activeProject.tasks,
   };
 }
 
-// Action: Tambah Task Baru ke DB
 export async function createTaskAction(data: {
   title: string;
   projectId: string;
   status: TaskStatusType;
   priority: TaskPriorityType;
 }) {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-
+  const session = await auth.api.getSession({ headers: await headers() });
   if (!session) throw new Error("Unauthorized");
 
   const userInitials = session.user.name
     ? session.user.name.slice(0, 2).toUpperCase()
     : "US";
 
-  const newTask = await prisma.task.create({
+  return await prisma.task.create({
     data: {
       title: data.title,
-      description:
-        "Add a description to keep the team aligned on the next steps.",
+      description: "Add a description to keep the team aligned on next steps.",
       status: data.status,
       priority: data.priority,
       projectId: data.projectId,
@@ -204,19 +147,10 @@ export async function createTaskAction(data: {
       people: [userInitials],
     },
   });
-
-  return newTask;
 }
 
-// Action: Ganti Status Task di DB (Move column)
-export async function updateTaskStatusAction(
-  taskId: string,
-  newStatus: TaskStatusType
-) {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-
+export async function updateTaskStatusAction(taskId: string, newStatus: TaskStatusType) {
+  const session = await auth.api.getSession({ headers: await headers() });
   if (!session) throw new Error("Unauthorized");
 
   return await prisma.task.update({
@@ -225,15 +159,8 @@ export async function updateTaskStatusAction(
   });
 }
 
-// Action: Rename Project di DB
-export async function updateProjectNameAction(
-  projectId: string,
-  newName: string
-) {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-
+export async function updateProjectNameAction(projectId: string, newName: string) {
+  const session = await auth.api.getSession({ headers: await headers() });
   if (!session) throw new Error("Unauthorized");
 
   return await prisma.project.update({
@@ -242,20 +169,13 @@ export async function updateProjectNameAction(
   });
 }
 
-// Action: Hapus Task dari DB
 export async function deleteTaskAction(taskId: string) {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-
+  const session = await auth.api.getSession({ headers: await headers() });
   if (!session) throw new Error("Unauthorized");
 
-  return await prisma.task.delete({
-    where: { id: taskId },
-  });
+  return await prisma.task.delete({ where: { id: taskId } });
 }
 
-// Action: Update Detail Task (Judul, Deskripsi, Priority)
 export async function updateTaskAction(
   taskId: string,
   data: {
@@ -265,10 +185,7 @@ export async function updateTaskAction(
     status?: TaskStatusType;
   }
 ) {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
-
+  const session = await auth.api.getSession({ headers: await headers() });
   if (!session) throw new Error("Unauthorized");
 
   return await prisma.task.update({
@@ -280,4 +197,38 @@ export async function updateTaskAction(
       ...(data.status && { status: data.status }),
     },
   });
+}
+
+export async function createProjectAction(name: string) {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) throw new Error("Unauthorized");
+
+  const membership = await prisma.membership.findFirst({
+    where: { userId: session.user.id },
+    select: { workspaceId: true },
+  });
+
+  if (!membership) throw new Error("Workspace not found");
+
+  return await prisma.project.create({
+    data: {
+      name,
+      description: "Plan, collaborate, and ship great work together.",
+      workspaceId: membership.workspaceId,
+    },
+    include: { tasks: { orderBy: { createdAt: "asc" } } },
+  });
+}
+
+export async function getProjectTasksAction(projectId: string) {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) throw new Error("Unauthorized");
+
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    include: { tasks: { orderBy: { createdAt: "asc" } } },
+  });
+
+  if (!project) throw new Error("Project not found");
+  return project;
 }

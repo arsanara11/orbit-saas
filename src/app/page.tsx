@@ -10,10 +10,18 @@ import {
   updateProjectNameAction,
   deleteTaskAction,
   updateTaskAction,
+  createProjectAction,
+  getProjectTasksAction,
 } from "./actions";
 
 type Status = "To Do" | "In Progress" | "In Review";
 type ViewMode = "board" | "list" | "timeline";
+
+type ProjectType = {
+  id: string;
+  name: string;
+  taskCount: number;
+};
 
 type TaskUI = {
   id: string;
@@ -198,33 +206,35 @@ export default function Home() {
 
   const [dark, setDark] = useState(true);
   const [activeNav, setActiveNav] = useState("Projects");
+  const [workspaceTab, setWorkspaceTab] = useState<"Team" | "Personal">("Team");
   const [tasks, setTasks] = useState<TaskUI[]>([]);
+  const [projectsList, setProjectsList] = useState<ProjectType[]>([]);
   const [projectId, setProjectId] = useState<string>("");
-  const [search, setSearch] = useState("");
+  const [project, setProject] = useState("Orbit Workspace");
+
+  const [projectSearchQuery, setProjectSearchQuery] = useState("");
+  const [taskSearchQuery, setTaskSearchQuery] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newStatus, setNewStatus] = useState<Status>("To Do");
-  const [project, setProject] = useState("Orbit Workspace");
   const [showNotifications, setShowNotifications] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
-  const [filter, setFilter] = useState("All priorities");
+  const [filterPriority, setFilterPriority] = useState("All priorities");
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [loadingData, setLoadingData] = useState(true);
+  const [switchingProject, setSwitchingProject] = useState(false);
 
-  // Status Interaktif Header Baru
   const [viewMode, setViewMode] = useState<ViewMode>("board");
   const [isPrivate, setIsPrivate] = useState(true);
   const [showViewDropdown, setShowViewDropdown] = useState(false);
   const [showMembersModal, setShowMembersModal] = useState(false);
   const [showCalendarModal, setShowCalendarModal] = useState(false);
 
-  // State Modal Detail Task
   const [activeTask, setActiveTask] = useState<TaskUI | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [editDesc, setEditDesc] = useState("");
   const [editPriority, setEditPriority] = useState<"Low" | "Medium" | "High">("Medium");
 
-  // Load Data Asli dari Database
   useEffect(() => {
     if (!isPending && !session) {
       router.push("/login");
@@ -236,6 +246,13 @@ export default function Home() {
         .then((res) => {
           setProject(res.project.name);
           setProjectId(res.project.id);
+
+          const formattedProjects: ProjectType[] = res.workspace.projects.map((p) => ({
+            id: p.id,
+            name: p.name,
+            taskCount: p.tasks ? p.tasks.length : 0,
+          }));
+          setProjectsList(formattedProjects);
 
           const formattedTasks: TaskUI[] = res.tasks.map((t) => ({
             id: t.id,
@@ -266,19 +283,80 @@ export default function Home() {
   const userName = session?.user?.name || "User";
   const userEmail = session?.user?.email || "";
 
+  // Filter Projek di Sidebar berdasarkan input pencarian & Tab Workspace
+  const filteredProjectsList = useMemo(() => {
+    return projectsList.filter((p) =>
+      p.name.toLowerCase().includes(projectSearchQuery.toLowerCase())
+    );
+  }, [projectsList, projectSearchQuery]);
+
+  // Filter Tasks berdasarkan Search Input & Priority Filter
   const filteredTasks = useMemo(
     () =>
       tasks.filter(
         (t) =>
           `${t.title} ${t.description}`
             .toLowerCase()
-            .includes(search.toLowerCase()) &&
-          (filter === "All priorities" || t.priority === filter)
+            .includes(taskSearchQuery.toLowerCase()) &&
+          (filterPriority === "All priorities" || t.priority === filterPriority)
       ),
-    [tasks, search, filter]
+    [tasks, taskSearchQuery, filterPriority]
   );
 
-  // Buka Modal Detail Task
+  async function handleSwitchProject(p: ProjectType) {
+    if (p.id === projectId) return;
+
+    setSwitchingProject(true);
+    setProjectId(p.id);
+    setProject(p.name);
+
+    try {
+      const res = await getProjectTasksAction(p.id);
+      const formattedTasks: TaskUI[] = res.tasks.map((t) => ({
+        id: t.id,
+        title: t.title,
+        description: t.description || "",
+        status: statusDbToUi(t.status),
+        priority: priorityDbToUi(t.priority),
+        date: new Date(t.createdAt).toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        }),
+        progress: t.progress,
+        comments: t.commentCount,
+        files: t.fileCount,
+        people:
+          t.people.length > 0 ? t.people : [getInitials(session?.user?.name)],
+      }));
+
+      setTasks(formattedTasks);
+    } catch (error) {
+      console.error("Gagal mengganti project:", error);
+    } finally {
+      setSwitchingProject(false);
+    }
+  }
+
+  async function handleCreateNewProject() {
+    const name = window.prompt("Enter new project name:");
+    if (!name?.trim()) return;
+
+    try {
+      const newProj = await createProjectAction(name.trim());
+      const newProjUI: ProjectType = {
+        id: newProj.id,
+        name: newProj.name,
+        taskCount: 0,
+      };
+
+      setProjectsList((old) => [...old, newProjUI]);
+      handleSwitchProject(newProjUI);
+    } catch (error) {
+      console.error("Gagal membuat project baru:", error);
+    }
+  }
+
   function openTaskDetail(task: TaskUI) {
     setActiveTask(task);
     setEditTitle(task.title);
@@ -286,7 +364,6 @@ export default function Home() {
     setEditPriority(task.priority);
   }
 
-  // Simpan Perubahan Task dari Modal
   async function handleSaveTaskDetail() {
     if (!activeTask || !editTitle.trim()) return;
 
@@ -314,13 +391,18 @@ export default function Home() {
     }
   }
 
-  // Hapus Task dari DB & UI
   async function handleDeleteTask(taskId: string, e?: React.MouseEvent) {
     if (e) e.stopPropagation();
 
     if (!confirm("Apakah Anda yakin ingin menghapus task ini?")) return;
 
     setTasks((old) => old.filter((t) => t.id !== taskId));
+    setProjectsList((old) =>
+      old.map((p) =>
+        p.id === projectId ? { ...p, taskCount: Math.max(0, p.taskCount - 1) } : p
+      )
+    );
+
     if (activeTask?.id === taskId) setActiveTask(null);
 
     try {
@@ -330,7 +412,6 @@ export default function Home() {
     }
   }
 
-  // Tambah Task Baru
   async function addTask(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!newTitle.trim() || !projectId) return;
@@ -363,6 +444,12 @@ export default function Home() {
       };
 
       setTasks((old) => [...old, newTaskUI]);
+      setProjectsList((old) =>
+        old.map((p) =>
+          p.id === projectId ? { ...p, taskCount: p.taskCount + 1 } : p
+        )
+      );
+
       setNewTitle("");
       setShowForm(false);
     } catch (error) {
@@ -370,7 +457,6 @@ export default function Home() {
     }
   }
 
-  // Pindah Status Task
   async function moveTask(id: string, newStatus: Status, e?: React.MouseEvent) {
     if (e) e.stopPropagation();
     const dbStatus = statusUiToDb(newStatus);
@@ -386,12 +472,14 @@ export default function Home() {
     }
   }
 
-  // Rename Project Name
   async function handleRenameProject() {
     const name = window.prompt("Project name", project);
     if (name?.trim() && name.trim() !== project && projectId) {
       const trimmedName = name.trim();
       setProject(trimmedName);
+      setProjectsList((old) =>
+        old.map((p) => (p.id === projectId ? { ...p, name: trimmedName } : p))
+      );
       try {
         await updateProjectNameAction(projectId, trimmedName);
       } catch (error) {
@@ -427,13 +515,14 @@ export default function Home() {
         </div>
         <span className="browser-plus">+</span>
         <div className="browser-address">
-          <span>◈</span> app.orbit.workspace / projects{" "}
+          <span>◈</span> app.orbit.workspace / {activeNav.toLowerCase()}{" "}
           <Icon name="chevron" size={12} />
         </div>
         <div className="browser-right">• • •</div>
       </div>
 
       <div className="app-layout">
+        {/* Leftmost Rail Navigation */}
         <aside className="rail">
           <div className="brand-mark">
             <Icon name="spark" size={22} />
@@ -464,6 +553,7 @@ export default function Home() {
           </div>
         </aside>
 
+        {/* Sidebar Projects */}
         <aside className="project-sidebar">
           <div className="side-heading">
             <div>
@@ -476,16 +566,26 @@ export default function Home() {
           </div>
 
           <div className="workspace-switch">
-            <button className="selected">Team</button>
-            <button>Personal</button>
+            <button
+              className={workspaceTab === "Team" ? "selected" : ""}
+              onClick={() => setWorkspaceTab("Team")}
+            >
+              Team
+            </button>
+            <button
+              className={workspaceTab === "Personal" ? "selected" : ""}
+              onClick={() => setWorkspaceTab("Personal")}
+            >
+              Personal
+            </button>
           </div>
 
           <label className="project-search">
             <Icon name="search" size={16} />
             <input
               placeholder="Search projects..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              value={projectSearchQuery}
+              onChange={(e) => setProjectSearchQuery(e.target.value)}
             />
             <kbd>⌘ K</kbd>
           </label>
@@ -494,26 +594,27 @@ export default function Home() {
             RECENT <Icon name="chevron" size={13} />
           </div>
 
-          <button className="project-item current">
-            <span className="project-hash">#</span>
-            <span>{project}</span>
-            <b>{tasks.filter((t) => t.status !== "In Review").length}</b>
-          </button>
-          <button className="project-item">
-            <span className="project-hash">#</span>
-            <span>Website Redesign</span>
-            <b className="count-warm">8</b>
-          </button>
-          <button className="project-item">
-            <span className="project-hash">#</span>
-            <span>Mobile App UI</span>
-            <b className="count-lilac">5</b>
-          </button>
-          <button className="project-item">
-            <span className="project-hash">#</span>
-            <span>Marketing Campaign</span>
-            <b className="count-green">3</b>
-          </button>
+          {/* List Projects Interaktif dari Database */}
+          <div className="space-y-1">
+            {filteredProjectsList.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => handleSwitchProject(p)}
+                className={`project-item w-full flex items-center justify-between text-left ${
+                  p.id === projectId ? "current" : ""
+                }`}
+              >
+                <div className="flex items-center gap-2 truncate">
+                  <span className="project-hash">#</span>
+                  <span className="truncate">{p.name}</span>
+                </div>
+                <b>{p.taskCount}</b>
+              </button>
+            ))}
+            {filteredProjectsList.length === 0 && (
+              <p className="p-2 text-xs text-gray-500">No projects found.</p>
+            )}
+          </div>
 
           <div className="sidebar-section-label categories-label">
             CATEGORIES <Icon name="chevron" size={13} />
@@ -546,11 +647,8 @@ export default function Home() {
             </div>
 
             <button
-              className="new-project"
-              onClick={() => {
-                setProject("New Orbit Project");
-                setActiveNav("Projects");
-              }}
+              className="new-project hover:bg-violet-600/20 transition cursor-pointer"
+              onClick={handleCreateNewProject}
             >
               <Icon name="plus" size={16} /> New project
             </button>
@@ -589,12 +687,17 @@ export default function Home() {
           </div>
         </aside>
 
+        {/* Main Content Area - Berubah Sesuai Menu Rail */}
         <section className="main-content">
           <header className="topbar">
             <div className="breadcrumbs">
-              <span>Projects</span>
-              <span className="crumb-slash">/</span>
-              <strong>{project}</strong>
+              <span>{activeNav}</span>
+              {activeNav === "Projects" && (
+                <>
+                  <span className="crumb-slash">/</span>
+                  <strong>{project}</strong>
+                </>
+              )}
             </div>
 
             <div className="top-actions">
@@ -642,502 +745,546 @@ export default function Home() {
             )}
           </header>
 
-          <div className="project-heading">
-            <div>
-              <div className="project-title-line">
-                <h1>{project}</h1>
-                <button
-                  className="edit-title"
-                  title="Rename project"
-                  onClick={handleRenameProject}
-                >
-                  ↗
-                </button>
-              </div>
-              <p className="project-subtitle">
-                Plan, collaborate, and ship great work together.
-              </p>
-              
-              {/* Member Line Interaktif */}
-              <div className="member-line">
-                <div
-                  className="avatar-stack cursor-pointer hover:opacity-80 transition"
-                  onClick={() => setShowMembersModal(true)}
-                  title="View project members"
-                >
-                  <Avatar initials={userInitials} index={0} />
-                  <Avatar initials="AR" index={1} />
-                  <Avatar initials="MK" index={2} />
-                  <Avatar initials="JL" index={3} />
-                </div>
-                <span
-                  className="more-members cursor-pointer hover:text-white transition"
-                  onClick={() => setShowMembersModal(true)}
-                >
-                  +{teamMembers.length}
-                </span>
-
-                {/* Switch Private / Public Interaktif */}
-                <span className="private-label">
-                  <Icon name="lock" size={13} /> {isPrivate ? "Private" : "Public"}
-                </span>
-                <span
-                  className={`toggle-pill cursor-pointer transition ${isPrivate ? "active" : ""}`}
-                  onClick={() => setIsPrivate(!isPrivate)}
-                  title={`Click to switch to ${isPrivate ? "Public" : "Private"}`}
-                >
-                  <i />
-                </span>
-              </div>
-            </div>
-
-            <div className="heading-actions">
-              {/* Tombol Kalender */}
-              <button
-                className="square-button hover:bg-[#35383a] transition"
-                title="View Calendar"
-                onClick={() => setShowCalendarModal(true)}
-              >
-                <Icon name="calendar" />
-              </button>
-
-              {/* View Dropdown Selection */}
-              <div className="relative">
-                <button
-                  className="view-select hover:bg-[#35383a] transition flex items-center gap-1 capitalize"
-                  onClick={() => setShowViewDropdown(!showViewDropdown)}
-                >
-                  {viewMode} view <Icon name="chevron" size={14} />
-                </button>
-
-                {showViewDropdown && (
-                  <div className="absolute right-0 top-11 z-30 w-36 rounded-xl border border-[var(--line)] bg-[var(--card)] p-1.5 shadow-xl text-xs text-white">
-                    {(["board", "list", "timeline"] as ViewMode[]).map((mode) => (
-                      <button
-                        key={mode}
-                        onClick={() => {
-                          setViewMode(mode);
-                          setShowViewDropdown(false);
-                        }}
-                        className={`w-full text-left px-3 py-2 rounded-lg capitalize transition ${
-                          viewMode === mode ? "bg-violet-600 font-semibold" : "hover:bg-[#35383a]"
-                        }`}
-                      >
-                        {mode} view
-                      </button>
-                    ))}
+          {/* HALAMAN 1: PROJECTS (KANBAN / LIST / TIMELINE) */}
+          {activeNav === "Projects" && (
+            <>
+              <div className="project-heading">
+                <div>
+                  <div className="project-title-line">
+                    <h1>{project}</h1>
+                    <button
+                      className="edit-title"
+                      title="Rename project"
+                      onClick={handleRenameProject}
+                    >
+                      ↗
+                    </button>
                   </div>
-                )}
-              </div>
-
-              <button
-                className="square-button hover:bg-[#35383a] transition"
-                title="Filter tasks"
-                onClick={() => setShowFilters(!showFilters)}
-              >
-                <Icon name="filter" />
-              </button>
-              <button
-                className="invite-button invite-desktop"
-                onClick={() => setShowForm(true)}
-              >
-                <Icon name="plus" size={15} /> Add task
-              </button>
-            </div>
-          </div>
-
-          {showFilters && (
-            <div className="filter-row">
-              <span>Filter by priority</span>
-              {["All priorities", "High", "Medium", "Low"].map((f) => (
-                <button
-                  key={f}
-                  className={filter === f ? "filter-selected" : ""}
-                  onClick={() => setFilter(f)}
-                >
-                  {f}
-                </button>
-              ))}
-              <button
-                className="filter-clear"
-                onClick={() => {
-                  setFilter("All priorities");
-                  setSearch("");
-                }}
-              >
-                Clear filters
-              </button>
-            </div>
-          )}
-
-          {showForm && (
-            <form className="task-form" onSubmit={addTask}>
-              <div className="form-heading">
-                <strong>Create a task</strong>
-                <span>Quickly add a task to your board</span>
-              </div>
-              <input
-                autoFocus
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-                placeholder="Task title..."
-                required
-              />
-              <select
-                value={newStatus}
-                onChange={(e) => setNewStatus(e.target.value as Status)}
-              >
-                {columns.map((c) => (
-                  <option key={c}>{c}</option>
-                ))}
-              </select>
-              <button type="submit" className="primary-button">
-                Create task
-              </button>
-              <button
-                type="button"
-                className="cancel-button"
-                onClick={() => setShowForm(false)}
-              >
-                Cancel
-              </button>
-            </form>
-          )}
-
-          <div className="board-toolbar">
-            {/* Tab View Selection Interaktif */}
-            <div className="board-tabs">
-              <button
-                className={viewMode === "board" ? "board-tab-active" : ""}
-                onClick={() => setViewMode("board")}
-              >
-                Board view
-              </button>
-              <button
-                className={viewMode === "list" ? "board-tab-active" : ""}
-                onClick={() => setViewMode("list")}
-              >
-                List view
-              </button>
-              <button
-                className={viewMode === "timeline" ? "board-tab-active" : ""}
-                onClick={() => setViewMode("timeline")}
-              >
-                Timeline
-              </button>
-            </div>
-
-            <div className="board-tools">
-              <label className="board-search">
-                <Icon name="search" size={15} />
-                <input
-                  placeholder="Search tasks"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
-              </label>
-              <div
-                className="board-avatars cursor-pointer hover:opacity-80 transition"
-                onClick={() => setShowMembersModal(true)}
-              >
-                <Avatar initials={userInitials} />
-                <Avatar initials="AR" index={1} />
-                <Avatar initials="MK" index={2} />
-                <span>+2</span>
-              </div>
-              <button
-                className="add-task-small"
-                onClick={() => setShowForm(true)}
-              >
-                <Icon name="plus" size={15} /> Add task
-              </button>
-            </div>
-          </div>
-
-          {/* TAMPILAN 1: KANBAN BOARD VIEW */}
-          {viewMode === "board" && (
-            <div className="kanban-board">
-              {columns.map((column, ci) => {
-                const list = filteredTasks.filter((t) => t.status === column);
-                return (
-                  <section className="kanban-column" key={column}>
-                    <div className="column-heading">
-                      <div className="column-name">
-                        <span className={`column-indicator indicator-${ci}`} />
-                        <h2>{column}</h2>
-                        <span className="column-count">{list.length}</span>
-                      </div>
-                      <div className="column-controls">
-                        <button
-                          title="Add task"
-                          onClick={() => {
-                            setNewStatus(column);
-                            setShowForm(true);
-                          }}
-                        >
-                          <Icon name="plus" size={17} />
-                        </button>
-                        <button title="Column options">
-                          <Icon name="more" size={17} />
-                        </button>
-                      </div>
+                  <p className="project-subtitle">
+                    Plan, collaborate, and ship great work together.
+                  </p>
+                  
+                  <div className="member-line">
+                    <div
+                      className="avatar-stack cursor-pointer hover:opacity-80 transition"
+                      onClick={() => setShowMembersModal(true)}
+                      title="View project members"
+                    >
+                      <Avatar initials={userInitials} index={0} />
+                      <Avatar initials="AR" index={1} />
+                      <Avatar initials="MK" index={2} />
+                      <Avatar initials="JL" index={3} />
                     </div>
+                    <span
+                      className="more-members cursor-pointer hover:text-white transition"
+                      onClick={() => setShowMembersModal(true)}
+                    >
+                      +{teamMembers.length}
+                    </span>
 
-                    <div className="task-stack">
-                      {list.map((task, ti) => (
-                        <article
-                          className={`task-card cursor-pointer transition hover:border-violet-500/50 ${
-                            ti === 0 && ci !== 1 ? "task-card-feature" : ""
-                          }`}
-                          key={task.id}
-                          onClick={() => openTaskDetail(task)}
-                        >
-                          {task.title === "New task" && (
-                            <div className="task-illustration">
-                              <div className="illustration-window">
-                                <div className="window-dots">
-                                  <i />
-                                  <i />
-                                  <i />
-                                </div>
-                                <div className="wire-card wire-a" />
-                                <div className="wire-card wire-b" />
-                                <div className="wire-card wire-c" />
-                                <div className="wire-lines">
-                                  <i />
-                                  <i />
-                                  <i />
-                                </div>
-                                <div className="wire-button">
-                                  <Icon name="plus" size={13} />
-                                </div>
+                    <span className="private-label">
+                      <Icon name="lock" size={13} /> {isPrivate ? "Private" : "Public"}
+                    </span>
+                    <span
+                      className={`toggle-pill cursor-pointer transition ${isPrivate ? "active" : ""}`}
+                      onClick={() => setIsPrivate(!isPrivate)}
+                      title={`Click to switch to ${isPrivate ? "Public" : "Private"}`}
+                    >
+                      <i />
+                    </span>
+                  </div>
+                </div>
+
+                <div className="heading-actions">
+                  <button
+                    className="square-button hover:bg-[#35383a] transition"
+                    title="View Calendar"
+                    onClick={() => setShowCalendarModal(true)}
+                  >
+                    <Icon name="calendar" />
+                  </button>
+
+                  <div className="relative">
+                    <button
+                      className="view-select hover:bg-[#35383a] transition flex items-center gap-1 capitalize"
+                      onClick={() => setShowViewDropdown(!showViewDropdown)}
+                    >
+                      {viewMode} view <Icon name="chevron" size={14} />
+                    </button>
+
+                    {showViewDropdown && (
+                      <div className="absolute right-0 top-11 z-30 w-36 rounded-xl border border-[var(--line)] bg-[var(--card)] p-1.5 shadow-xl text-xs text-white">
+                        {(["board", "list", "timeline"] as ViewMode[]).map((mode) => (
+                          <button
+                            key={mode}
+                            onClick={() => {
+                              setViewMode(mode);
+                              setShowViewDropdown(false);
+                            }}
+                            className={`w-full text-left px-3 py-2 rounded-lg capitalize transition ${
+                              viewMode === mode ? "bg-violet-600 font-semibold" : "hover:bg-[#35383a]"
+                            }`}
+                          >
+                            {mode} view
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    className="square-button hover:bg-[#35383a] transition"
+                    title="Filter tasks"
+                    onClick={() => setShowFilters(!showFilters)}
+                  >
+                    <Icon name="filter" />
+                  </button>
+                  <button
+                    className="invite-button invite-desktop"
+                    onClick={() => setShowForm(true)}
+                  >
+                    <Icon name="plus" size={15} /> Add task
+                  </button>
+                </div>
+              </div>
+
+              {showFilters && (
+                <div className="filter-row">
+                  <span>Filter by priority</span>
+                  {["All priorities", "High", "Medium", "Low"].map((f) => (
+                    <button
+                      key={f}
+                      className={filterPriority === f ? "filter-selected" : ""}
+                      onClick={() => setFilterPriority(f)}
+                    >
+                      {f}
+                    </button>
+                  ))}
+                  <button
+                    className="filter-clear"
+                    onClick={() => {
+                      setFilterPriority("All priorities");
+                      setTaskSearchQuery("");
+                    }}
+                  >
+                    Clear filters
+                  </button>
+                </div>
+              )}
+
+              {showForm && (
+                <form className="task-form" onSubmit={addTask}>
+                  <div className="form-heading">
+                    <strong>Create a task</strong>
+                    <span>Quickly add a task to your board</span>
+                  </div>
+                  <input
+                    autoFocus
+                    value={newTitle}
+                    onChange={(e) => setNewTitle(e.target.value)}
+                    placeholder="Task title..."
+                    required
+                  />
+                  <select
+                    value={newStatus}
+                    onChange={(e) => setNewStatus(e.target.value as Status)}
+                  >
+                    {columns.map((c) => (
+                      <option key={c}>{c}</option>
+                    ))}
+                  </select>
+                  <button type="submit" className="primary-button">
+                    Create task
+                  </button>
+                  <button
+                    type="button"
+                    className="cancel-button"
+                    onClick={() => setShowForm(false)}
+                  >
+                    Cancel
+                  </button>
+                </form>
+              )}
+
+              <div className="board-toolbar">
+                <div className="board-tabs">
+                  <button
+                    className={viewMode === "board" ? "board-tab-active" : ""}
+                    onClick={() => setViewMode("board")}
+                  >
+                    Board view
+                  </button>
+                  <button
+                    className={viewMode === "list" ? "board-tab-active" : ""}
+                    onClick={() => setViewMode("list")}
+                  >
+                    List view
+                  </button>
+                  <button
+                    className={viewMode === "timeline" ? "board-tab-active" : ""}
+                    onClick={() => setViewMode("timeline")}
+                  >
+                    Timeline
+                  </button>
+                </div>
+
+                <div className="board-tools">
+                  <label className="board-search">
+                    <Icon name="search" size={15} />
+                    <input
+                      placeholder="Search tasks"
+                      value={taskSearchQuery}
+                      onChange={(e) => setTaskSearchQuery(e.target.value)}
+                    />
+                  </label>
+                  <div
+                    className="board-avatars cursor-pointer hover:opacity-80 transition"
+                    onClick={() => setShowMembersModal(true)}
+                  >
+                    <Avatar initials={userInitials} />
+                    <Avatar initials="AR" index={1} />
+                    <Avatar initials="MK" index={2} />
+                    <span>+2</span>
+                  </div>
+                  <button
+                    className="add-task-small"
+                    onClick={() => setShowForm(true)}
+                  >
+                    <Icon name="plus" size={15} /> Add task
+                  </button>
+                </div>
+              </div>
+
+              {switchingProject ? (
+                <div className="flex h-64 items-center justify-center text-gray-400">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-violet-500 border-t-transparent" />
+                    Loading project data...
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* TAMPILAN 1: KANBAN BOARD VIEW */}
+                  {viewMode === "board" && (
+                    <div className="kanban-board">
+                      {columns.map((column, ci) => {
+                        const list = filteredTasks.filter((t) => t.status === column);
+                        return (
+                          <section className="kanban-column" key={column}>
+                            <div className="column-heading">
+                              <div className="column-name">
+                                <span className={`column-indicator indicator-${ci}`} />
+                                <h2>{column}</h2>
+                                <span className="column-count">{list.length}</span>
                               </div>
-                              <span className="art-cursor">↖</span>
-                            </div>
-                          )}
-
-                          {task.title === "Business model canvas of product" && (
-                            <div className="canvas-art">
-                              <div className="canvas-diamond diamond-one" />
-                              <div className="canvas-diamond diamond-two" />
-                              <div className="canvas-node node-one">◎</div>
-                              <div className="canvas-node node-two">✤</div>
-                              <div className="canvas-node node-three">♟</div>
-                              <div className="canvas-node node-four">▤</div>
-                              <div className="canvas-connect connect-one" />
-                              <div className="canvas-connect connect-two" />
-                              <div className="canvas-connect connect-three" />
-                            </div>
-                          )}
-
-                          <div className="task-meta">
-                            <span
-                              className={`priority priority-${task.priority.toLowerCase()}`}
-                            >
-                              {task.priority}
-                            </span>
-                            <span className="date-chip">
-                              <Icon name="calendar" size={12} />
-                              {task.date}
-                            </span>
-                            <button
-                              className="card-more hover:text-red-400"
-                              title="Delete task"
-                              onClick={(e) => handleDeleteTask(task.id, e)}
-                            >
-                              <Icon name="trash" size={15} />
-                            </button>
-                          </div>
-
-                          <h3>{task.title}</h3>
-                          <p className="task-description">{task.description}</p>
-
-                          {task.progress > 0 && (
-                            <div className="progress-wrap">
-                              <div
-                                className={`progress-track progress-${task.priority.toLowerCase()}`}
-                              >
-                                <i style={{ width: `${task.progress}%` }} />
+                              <div className="column-controls">
+                                <button
+                                  title="Add task"
+                                  onClick={() => {
+                                    setNewStatus(column);
+                                    setShowForm(true);
+                                  }}
+                                >
+                                  <Icon name="plus" size={17} />
+                                </button>
+                                <button title="Column options">
+                                  <Icon name="more" size={17} />
+                                </button>
                               </div>
-                              <span>{task.progress}%</span>
                             </div>
-                          )}
 
-                          <div className="task-card-footer">
-                            <div className="task-avatars">
-                              {task.people.map((person, i) => (
-                                <Avatar
-                                  key={person + i}
-                                  initials={person}
-                                  index={i}
-                                />
+                            <div className="task-stack">
+                              {list.map((task, ti) => (
+                                <article
+                                  className={`task-card cursor-pointer transition hover:border-violet-500/50 ${
+                                    ti === 0 && ci !== 1 ? "task-card-feature" : ""
+                                  }`}
+                                  key={task.id}
+                                  onClick={() => openTaskDetail(task)}
+                                >
+                                  {task.title === "New task" && (
+                                    <div className="task-illustration">
+                                      <div className="illustration-window">
+                                        <div className="window-dots">
+                                          <i />
+                                          <i />
+                                          <i />
+                                        </div>
+                                        <div className="wire-card wire-a" />
+                                        <div className="wire-card wire-b" />
+                                        <div className="wire-card wire-c" />
+                                        <div className="wire-lines">
+                                          <i />
+                                          <i />
+                                          <i />
+                                        </div>
+                                        <div className="wire-button">
+                                          <Icon name="plus" size={13} />
+                                        </div>
+                                      </div>
+                                      <span className="art-cursor">↖</span>
+                                    </div>
+                                  )}
+
+                                  {task.title === "Business model canvas of product" && (
+                                    <div className="canvas-art">
+                                      <div className="canvas-diamond diamond-one" />
+                                      <div className="canvas-diamond diamond-two" />
+                                      <div className="canvas-node node-one">◎</div>
+                                      <div className="canvas-node node-two">✤</div>
+                                      <div className="canvas-node node-three">♟</div>
+                                      <div className="canvas-node node-four">▤</div>
+                                      <div className="canvas-connect connect-one" />
+                                      <div className="canvas-connect connect-two" />
+                                      <div className="canvas-connect connect-three" />
+                                    </div>
+                                  )}
+
+                                  <div className="task-meta">
+                                    <span
+                                      className={`priority priority-${task.priority.toLowerCase()}`}
+                                    >
+                                      {task.priority}
+                                    </span>
+                                    <span className="date-chip">
+                                      <Icon name="calendar" size={12} />
+                                      {task.date}
+                                    </span>
+                                    <button
+                                      className="card-more hover:text-red-400"
+                                      title="Delete task"
+                                      onClick={(e) => handleDeleteTask(task.id, e)}
+                                    >
+                                      <Icon name="trash" size={15} />
+                                    </button>
+                                  </div>
+
+                                  <h3>{task.title}</h3>
+                                  <p className="task-description">{task.description}</p>
+
+                                  {task.progress > 0 && (
+                                    <div className="progress-wrap">
+                                      <div
+                                        className={`progress-track progress-${task.priority.toLowerCase()}`}
+                                      >
+                                        <i style={{ width: `${task.progress}%` }} />
+                                      </div>
+                                      <span>{task.progress}%</span>
+                                    </div>
+                                  )}
+
+                                  <div className="task-card-footer">
+                                    <div className="task-avatars">
+                                      {task.people.map((person, i) => (
+                                        <Avatar
+                                          key={person + i}
+                                          initials={person}
+                                          index={i}
+                                        />
+                                      ))}
+                                    </div>
+                                    <div className="task-stats">
+                                      <span>
+                                        <Icon name="paperclip" size={13} />
+                                        {task.files}
+                                      </span>
+                                      <span>
+                                        <Icon name="comment" size={13} />
+                                        {task.comments}
+                                      </span>
+                                      <button
+                                        title="Mark complete"
+                                        onClick={(e) =>
+                                          moveTask(
+                                            task.id,
+                                            task.status === "In Review"
+                                              ? "To Do"
+                                              : "In Review",
+                                            e
+                                          )
+                                        }
+                                      >
+                                        <Icon name="check" size={14} />
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  <div className="card-move">
+                                    <span>Move to</span>
+                                    {columns
+                                      .filter((c) => c !== task.status)
+                                      .map((c) => (
+                                        <button
+                                          key={c}
+                                          onClick={(e) => moveTask(task.id, c, e)}
+                                        >
+                                          {c}
+                                        </button>
+                                      ))}
+                                  </div>
+                                </article>
                               ))}
-                            </div>
-                            <div className="task-stats">
-                              <span>
-                                <Icon name="paperclip" size={13} />
-                                {task.files}
-                              </span>
-                              <span>
-                                <Icon name="comment" size={13} />
-                                {task.comments}
-                              </span>
+
+                              {list.length === 0 && (
+                                <div className="empty-column">
+                                  No tasks here yet.
+                                  <button
+                                    onClick={() => {
+                                      setNewStatus(column);
+                                      setShowForm(true);
+                                    }}
+                                  >
+                                    <Icon name="plus" size={14} /> Add a task
+                                  </button>
+                                </div>
+                              )}
+
                               <button
-                                title="Mark complete"
-                                onClick={(e) =>
-                                  moveTask(
-                                    task.id,
-                                    task.status === "In Review"
-                                      ? "To Do"
-                                      : "In Review",
-                                    e
-                                  )
-                                }
+                                className="column-add"
+                                onClick={() => {
+                                  setNewStatus(column);
+                                  setShowForm(true);
+                                }}
                               >
-                                <Icon name="check" size={14} />
+                                <Icon name="plus" size={16} /> Add task
                               </button>
                             </div>
-                          </div>
-
-                          <div className="card-move">
-                            <span>Move to</span>
-                            {columns
-                              .filter((c) => c !== task.status)
-                              .map((c) => (
-                                <button
-                                  key={c}
-                                  onClick={(e) => moveTask(task.id, c, e)}
-                                >
-                                  {c}
-                                </button>
-                              ))}
-                          </div>
-                        </article>
-                      ))}
-
-                      {list.length === 0 && (
-                        <div className="empty-column">
-                          No tasks here yet.
-                          <button
-                            onClick={() => {
-                              setNewStatus(column);
-                              setShowForm(true);
-                            }}
-                          >
-                            <Icon name="plus" size={14} /> Add a task
-                          </button>
-                        </div>
-                      )}
-
-                      <button
-                        className="column-add"
-                        onClick={() => {
-                          setNewStatus(column);
-                          setShowForm(true);
-                        }}
-                      >
-                        <Icon name="plus" size={16} /> Add task
-                      </button>
+                          </section>
+                        );
+                      })}
                     </div>
-                  </section>
-                );
-              })}
-            </div>
-          )}
+                  )}
 
-          {/* TAMPILAN 2: LIST VIEW TABEL */}
-          {viewMode === "list" && (
-            <div className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-4 text-white">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead>
-                    <tr className="border-b border-[var(--line)] text-xs text-gray-400 uppercase tracking-wider">
-                      <th className="py-3 px-4">Task Name</th>
-                      <th className="py-3 px-4">Status</th>
-                      <th className="py-3 px-4">Priority</th>
-                      <th className="py-3 px-4">Date</th>
-                      <th className="py-3 px-4">Assignee</th>
-                      <th className="py-3 px-4 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[var(--line)]">
-                    {filteredTasks.map((t) => (
-                      <tr
-                        key={t.id}
-                        onClick={() => openTaskDetail(t)}
-                        className="cursor-pointer hover:bg-[#35383a]/50 transition"
-                      >
-                        <td className="py-3.5 px-4 font-medium">{t.title}</td>
-                        <td className="py-3.5 px-4">
-                          <span className="rounded-full px-2.5 py-1 text-xs font-semibold bg-[#35383a] text-violet-300">
-                            {t.status}
-                          </span>
-                        </td>
-                        <td className="py-3.5 px-4">
-                          <span
-                            className={`priority priority-${t.priority.toLowerCase()}`}
-                          >
-                            {t.priority}
-                          </span>
-                        </td>
-                        <td className="py-3.5 px-4 text-xs text-gray-400">{t.date}</td>
-                        <td className="py-3.5 px-4">
-                          <div className="flex -space-x-1">
-                            {t.people.map((p, i) => (
-                              <Avatar key={p + i} initials={p} index={i} />
+                  {/* TAMPILAN 2: LIST VIEW TABEL */}
+                  {viewMode === "list" && (
+                    <div className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-4 text-white">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-sm">
+                          <thead>
+                            <tr className="border-b border-[var(--line)] text-xs text-gray-400 uppercase tracking-wider">
+                              <th className="py-3 px-4">Task Name</th>
+                              <th className="py-3 px-4">Status</th>
+                              <th className="py-3 px-4">Priority</th>
+                              <th className="py-3 px-4">Date</th>
+                              <th className="py-3 px-4">Assignee</th>
+                              <th className="py-3 px-4 text-right">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[var(--line)]">
+                            {filteredTasks.map((t) => (
+                              <tr
+                                key={t.id}
+                                onClick={() => openTaskDetail(t)}
+                                className="cursor-pointer hover:bg-[#35383a]/50 transition"
+                              >
+                                <td className="py-3.5 px-4 font-medium">{t.title}</td>
+                                <td className="py-3.5 px-4">
+                                  <span className="rounded-full px-2.5 py-1 text-xs font-semibold bg-[#35383a] text-violet-300">
+                                    {t.status}
+                                  </span>
+                                </td>
+                                <td className="py-3.5 px-4">
+                                  <span
+                                    className={`priority priority-${t.priority.toLowerCase()}`}
+                                  >
+                                    {t.priority}
+                                  </span>
+                                </td>
+                                <td className="py-3.5 px-4 text-xs text-gray-400">{t.date}</td>
+                                <td className="py-3.5 px-4">
+                                  <div className="flex -space-x-1">
+                                    {t.people.map((p, i) => (
+                                      <Avatar key={p + i} initials={p} index={i} />
+                                    ))}
+                                  </div>
+                                </td>
+                                <td className="py-3.5 px-4 text-right">
+                                  <button
+                                    onClick={(e) => handleDeleteTask(t.id, e)}
+                                    className="p-1.5 text-gray-400 hover:text-red-400 transition"
+                                  >
+                                    <Icon name="trash" size={15} />
+                                  </button>
+                                </td>
+                              </tr>
                             ))}
-                          </div>
-                        </td>
-                        <td className="py-3.5 px-4 text-right">
-                          <button
-                            onClick={(e) => handleDeleteTask(t.id, e)}
-                            className="p-1.5 text-gray-400 hover:text-red-400 transition"
+                            {filteredTasks.length === 0 && (
+                              <tr>
+                                <td colSpan={6} className="py-8 text-center text-gray-400">
+                                  No tasks match your search or filters.
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* TAMPILAN 3: TIMELINE VIEW */}
+                  {viewMode === "timeline" && (
+                    <div className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6 text-white space-y-4">
+                      <div className="flex items-center justify-between pb-4 border-b border-[var(--line)]">
+                        <h3 className="text-sm font-semibold text-gray-300">Project Timeline Roadmap</h3>
+                        <span className="text-xs text-gray-400">2026 Schedule</span>
+                      </div>
+                      <div className="space-y-4">
+                        {filteredTasks.map((t, index) => (
+                          <div
+                            key={t.id}
+                            onClick={() => openTaskDetail(t)}
+                            className="p-3 rounded-xl border border-[var(--line)] bg-[#1e2022] hover:border-violet-500/50 cursor-pointer transition"
                           >
-                            <Icon name="trash" size={15} />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                    {filteredTasks.length === 0 && (
-                      <tr>
-                        <td colSpan={6} className="py-8 text-center text-gray-400">
-                          No tasks match your search or filters.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
+                            <div className="flex items-center justify-between mb-2">
+                              <strong className="text-sm">{t.title}</strong>
+                              <span className="text-xs text-gray-400">{t.date}</span>
+                            </div>
+                            <div className="w-full bg-[#35383a] h-2.5 rounded-full overflow-hidden">
+                              <div
+                                className="bg-violet-500 h-full rounded-full transition-all duration-500"
+                                style={{ width: `${t.progress || (index + 1) * 20}%` }}
+                              />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </>
+          )}
+
+          {/* HALAMAN 2: OVERVIEW */}
+          {activeNav === "Overview" && (
+            <div className="p-6 text-white space-y-6">
+              <h1 className="text-2xl font-bold">Workspace Overview</h1>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="p-4 rounded-2xl border border-[var(--line)] bg-[var(--card)]">
+                  <span className="text-xs text-gray-400 block">Total Active Projects</span>
+                  <strong className="text-2xl font-bold mt-1 block">{projectsList.length}</strong>
+                </div>
+                <div className="p-4 rounded-2xl border border-[var(--line)] bg-[var(--card)]">
+                  <span className="text-xs text-gray-400 block">Total Tasks</span>
+                  <strong className="text-2xl font-bold mt-1 block">
+                    {projectsList.reduce((acc, curr) => acc + curr.taskCount, 0)}
+                  </strong>
+                </div>
+                <div className="p-4 rounded-2xl border border-[var(--line)] bg-[var(--card)]">
+                  <span className="text-xs text-gray-400 block">Team Members</span>
+                  <strong className="text-2xl font-bold mt-1 block">{teamMembers.length}</strong>
+                </div>
               </div>
             </div>
           )}
 
-          {/* TAMPILAN 3: TIMELINE VIEW */}
-          {viewMode === "timeline" && (
-            <div className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6 text-white space-y-4">
-              <div className="flex items-center justify-between pb-4 border-b border-[var(--line)]">
-                <h3 className="text-sm font-semibold text-gray-300">Project Timeline Roadmap</h3>
-                <span className="text-xs text-gray-400">2026 Schedule</span>
-              </div>
-              <div className="space-y-4">
-                {filteredTasks.map((t, index) => (
-                  <div
-                    key={t.id}
-                    onClick={() => openTaskDetail(t)}
-                    className="p-3 rounded-xl border border-[var(--line)] bg-[#1e2022] hover:border-violet-500/50 cursor-pointer transition"
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <strong className="text-sm">{t.title}</strong>
-                      <span className="text-xs text-gray-400">{t.date}</span>
-                    </div>
-                    <div className="w-full bg-[#35383a] h-2.5 rounded-full overflow-hidden">
-                      <div
-                        className="bg-violet-500 h-full rounded-full transition-all duration-500"
-                        style={{ width: `${t.progress || (index + 1) * 20}%` }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
+          {/* HALAMAN 3: OTHER MENU FALLBACK (ACTIVITY / MESSAGES / CALENDAR / SETTINGS) */}
+          {["Activity", "Messages", "Calendar", "Settings"].includes(activeNav) && (
+            <div className="p-8 text-center text-white">
+              <h2 className="text-xl font-bold mb-2">{activeNav} View</h2>
+              <p className="text-xs text-gray-400">
+                You are currently viewing the {activeNav} panel for this workspace.
+              </p>
             </div>
           )}
 
@@ -1160,7 +1307,7 @@ export default function Home() {
               </span>
               <button
                 onClick={() => setActiveTask(null)}
-                className="text-gray-400 hover:text-white text-lg font-bold"
+                className="text-gray-400 hover:text-white text-lg font-bold cursor-pointer"
               >
                 ✕
               </button>
@@ -1207,7 +1354,7 @@ export default function Home() {
               <button
                 type="button"
                 onClick={() => handleDeleteTask(activeTask.id)}
-                className="flex items-center gap-1.5 text-xs text-red-400 hover:text-red-300 font-medium transition"
+                className="flex items-center gap-1.5 text-xs text-red-400 hover:text-red-300 font-medium transition cursor-pointer"
               >
                 <Icon name="trash" size={14} /> Delete Task
               </button>
@@ -1216,14 +1363,14 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={() => setActiveTask(null)}
-                  className="px-4 py-2 rounded-xl text-xs text-gray-300 hover:bg-[#35383a] transition"
+                  className="px-4 py-2 rounded-xl text-xs text-gray-300 hover:bg-[#35383a] transition cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
                   onClick={handleSaveTaskDetail}
-                  className="px-4 py-2 rounded-xl bg-violet-600 text-xs text-white font-medium hover:bg-violet-500 transition"
+                  className="px-4 py-2 rounded-xl bg-violet-600 text-xs text-white font-medium hover:bg-violet-500 transition cursor-pointer"
                 >
                   Save Changes
                 </button>
@@ -1241,7 +1388,7 @@ export default function Home() {
               <strong className="text-sm font-semibold">Project Members</strong>
               <button
                 onClick={() => setShowMembersModal(false)}
-                className="text-gray-400 hover:text-white"
+                className="text-gray-400 hover:text-white cursor-pointer"
               >
                 ✕
               </button>
@@ -1267,7 +1414,7 @@ export default function Home() {
             </div>
             <button
               onClick={() => setShowMembersModal(false)}
-              className="mt-6 w-full py-2.5 rounded-xl bg-violet-600 text-xs text-white font-semibold hover:bg-violet-500 transition"
+              className="mt-6 w-full py-2.5 rounded-xl bg-violet-600 text-xs text-white font-semibold hover:bg-violet-500 transition cursor-pointer"
             >
               Close
             </button>
@@ -1283,7 +1430,7 @@ export default function Home() {
               <strong className="text-sm font-semibold">Project Calendar Schedule</strong>
               <button
                 onClick={() => setShowCalendarModal(false)}
-                className="text-gray-400 hover:text-white"
+                className="text-gray-400 hover:text-white cursor-pointer"
               >
                 ✕
               </button>
@@ -1300,7 +1447,7 @@ export default function Home() {
             </div>
             <button
               onClick={() => setShowCalendarModal(false)}
-              className="mt-6 w-full py-2.5 rounded-xl bg-violet-600 text-xs text-white font-semibold hover:bg-violet-500 transition"
+              className="mt-6 w-full py-2.5 rounded-xl bg-violet-600 text-xs text-white font-semibold hover:bg-violet-500 transition cursor-pointer"
             >
               Close Calendar
             </button>
