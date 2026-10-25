@@ -157,6 +157,8 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
 
   const activeProjectId = searchParams.get("id");
   const isOverviewPage = pathname.startsWith("/overview");
+  const isProjectsPage = pathname.startsWith("/projects");
+  const showSubSidebar = isOverviewPage || isProjectsPage;
 
   useEffect(() => {
     if (!isPending && !session) {
@@ -287,7 +289,12 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
         <div className="browser-right">• • •</div>
       </div>
 
-      <div className="app-layout">
+      <div
+        className="app-layout"
+        style={{
+          gridTemplateColumns: showSubSidebar ? undefined : "60px 1fr",
+        }}
+      >
         <aside className="rail">
           <div className="brand-mark">
             <Icon name="spark" size={22} />
@@ -321,291 +328,293 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
           </div>
         </aside>
 
-        <aside className="project-sidebar">
-          <div className="side-heading">
-            <div>
-              <span className="eyebrow">WORKSPACE</span>
-              <h2>{isOverviewPage ? "Overview" : "Projects"}</h2>
-            </div>
-            <div className="relative">
-              <button
-                className="icon-button cursor-pointer"
-                onClick={() => setShowWorkspaceMenu(!showWorkspaceMenu)}
-                title="Workspace options"
-              >
-                <Icon name="more" />
-              </button>
-
-              {showWorkspaceMenu && (
-                <>
-                  <div className="fixed inset-0 z-20" onClick={() => setShowWorkspaceMenu(false)} />
-                  <div className="absolute top-8 right-0 z-30 w-52 rounded-xl border border-[var(--line)] bg-[var(--card)] p-2 shadow-2xl text-xs text-white space-y-1">
-                    <button
-                      onClick={() => {
-                        setShowWorkspaceMenu(false);
-                        setShowNewProjectModal(true);
-                      }}
-                      className="w-full text-left px-3 py-2 rounded-lg hover:bg-[#35383a] transition flex items-center gap-2 cursor-pointer"
-                    >
-                      <Icon name="plus" size={14} /> Create New Project
-                    </button>
-                    <button
-                      onClick={() => {
-                        setShowWorkspaceMenu(false);
-                        setShowMembersModal(true);
-                      }}
-                      className="w-full text-left px-3 py-2 rounded-lg hover:bg-[#35383a] transition flex items-center gap-2 cursor-pointer"
-                    >
-                      <Icon name="spark" size={14} /> Manage Members
-                    </button>
-                    <button
-                      onClick={() => {
-                        setShowWorkspaceMenu(false);
-                        setShowStorageModal(true);
-                      }}
-                      className="w-full text-left px-3 py-2 rounded-lg hover:bg-[#35383a] transition flex items-center gap-2 cursor-pointer"
-                    >
-                      <Icon name="folder" size={14} /> Workspace Storage
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-
-          {isOverviewPage ? (
-            <>
-              <div className="sidebar-section-label">QUICK VIEWS</div>
-              <div className="space-y-1">
-                <button
-                  onClick={() => handleQuickViewClick("todays-focus")}
-                  className={`project-item w-full flex items-center justify-between text-left cursor-pointer ${
-                    activeQuickView === "todays-focus" ? "current" : ""
-                  }`}
-                >
-                  <div className="flex items-center gap-2 truncate">
-                    <span className="project-hash flex items-center justify-center">
-                      <Icon name="zap" size={13} />
-                    </span>
-                    <span className="truncate">Today's Focus</span>
-                  </div>
-                </button>
-                <button
-                  onClick={() => handleQuickViewClick("my-tasks")}
-                  className={`project-item w-full flex items-center justify-between text-left cursor-pointer ${
-                    activeQuickView === "my-tasks" ? "current" : ""
-                  }`}
-                >
-                  <div className="flex items-center gap-2 truncate">
-                    <span className="project-hash flex items-center justify-center">
-                      <Icon name="check" size={13} />
-                    </span>
-                    <span className="truncate">My Tasks</span>
-                  </div>
-                </button>
-                <button
-                  onClick={() => handleQuickViewClick("recent-activity")}
-                  className={`project-item w-full flex items-center justify-between text-left cursor-pointer ${
-                    activeQuickView === "recent-activity" ? "current" : ""
-                  }`}
-                >
-                  <div className="flex items-center gap-2 truncate">
-                    <span className="project-hash flex items-center justify-center">
-                      <Icon name="refresh" size={13} />
-                    </span>
-                    <span className="truncate">Recent Activity</span>
-                  </div>
-                </button>
+        {showSubSidebar && (
+          <aside className="project-sidebar">
+            <div className="side-heading">
+              <div>
+                <span className="eyebrow">WORKSPACE</span>
+                <h2>{isOverviewPage ? "Overview" : "Projects"}</h2>
               </div>
+              <div className="relative">
+                <button
+                  className="icon-button cursor-pointer"
+                  onClick={() => setShowWorkspaceMenu(!showWorkspaceMenu)}
+                  title="Workspace options"
+                >
+                  <Icon name="more" />
+                </button>
 
-              <div className="sidebar-section-label categories-label">ACTIVE PROJECTS</div>
-              <div className="space-y-1">
-                {projectsList.slice(0, 5).map((p) => (
+                {showWorkspaceMenu && (
+                  <>
+                    <div className="fixed inset-0 z-20" onClick={() => setShowWorkspaceMenu(false)} />
+                    <div className="absolute top-8 right-0 z-30 w-52 rounded-xl border border-[var(--line)] bg-[var(--card)] p-2 shadow-2xl text-xs text-white space-y-1">
+                      <button
+                        onClick={() => {
+                          setShowWorkspaceMenu(false);
+                          setShowNewProjectModal(true);
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-lg hover:bg-[#35383a] transition flex items-center gap-2 cursor-pointer"
+                      >
+                        <Icon name="plus" size={14} /> Create New Project
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowWorkspaceMenu(false);
+                          setShowMembersModal(true);
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-lg hover:bg-[#35383a] transition flex items-center gap-2 cursor-pointer"
+                      >
+                        <Icon name="spark" size={14} /> Manage Members
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowWorkspaceMenu(false);
+                          setShowStorageModal(true);
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-lg hover:bg-[#35383a] transition flex items-center gap-2 cursor-pointer"
+                      >
+                        <Icon name="folder" size={14} /> Workspace Storage
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {isOverviewPage ? (
+              <>
+                <div className="sidebar-section-label">QUICK VIEWS</div>
+                <div className="space-y-1">
                   <button
-                    key={p.id}
-                    onClick={() => router.push(`/projects?id=${p.id}`)}
-                    className="project-item w-full flex items-center justify-between text-left cursor-pointer"
+                    onClick={() => handleQuickViewClick("todays-focus")}
+                    className={`project-item w-full flex items-center justify-between text-left cursor-pointer ${
+                      activeQuickView === "todays-focus" ? "current" : ""
+                    }`}
                   >
                     <div className="flex items-center gap-2 truncate">
-                      <span className="project-hash">#</span>
-                      <span className="truncate">{p.name}</span>
-                    </div>
-                    <b>{p.taskCount}</b>
-                  </button>
-                ))}
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="workspace-switch">
-                <button
-                  className={workspaceTab === "Team" ? "selected" : ""}
-                  onClick={() => setWorkspaceTab("Team")}
-                >
-                  Team
-                </button>
-                <button
-                  className={workspaceTab === "Personal" ? "selected" : ""}
-                  onClick={() => setWorkspaceTab("Personal")}
-                >
-                  Personal
-                </button>
-              </div>
-
-              <label className="project-search">
-                <Icon name="search" size={16} />
-                <input
-                  placeholder="Search projects..."
-                  value={projectSearchQuery}
-                  onChange={(e) => setProjectSearchQuery(e.target.value)}
-                />
-                <kbd>⌘ K</kbd>
-              </label>
-
-              <div
-                className="sidebar-section-label cursor-pointer flex items-center justify-between"
-                onClick={() => setIsRecentOpen(!isRecentOpen)}
-              >
-                <span>RECENT</span>
-                <span
-                  className={`transform transition-transform ${isRecentOpen ? "rotate-0" : "-rotate-90"}`}
-                >
-                  <Icon name="chevron" size={13} />
-                </span>
-              </div>
-
-              {isRecentOpen && (
-                <div className="space-y-1">
-                  {filteredProjectsList.map((p) => {
-                    const isSelected =
-                      pathname === "/projects" &&
-                      (searchParams.get("id") === p.id ||
-                        (!searchParams.get("id") && projectsList[0]?.id === p.id));
-                    return (
-                      <button
-                        key={p.id}
-                        onClick={() => router.push(`/projects?id=${p.id}`)}
-                        className={`project-item w-full flex items-center justify-between text-left cursor-pointer ${
-                          isSelected ? "current" : ""
-                        }`}
-                      >
-                        <div className="flex items-center gap-2 truncate">
-                          <span className="project-hash">#</span>
-                          <span className="truncate">{p.name}</span>
-                        </div>
-                        <b>{p.taskCount}</b>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-
-              <div
-                className="sidebar-section-label categories-label cursor-pointer flex items-center justify-between"
-                onClick={() => setIsCategoriesOpen(!isCategoriesOpen)}
-              >
-                <span>CATEGORIES</span>
-                <span
-                  className={`transform transition-transform ${
-                    isCategoriesOpen ? "rotate-0" : "-rotate-90"
-                  }`}
-                >
-                  <Icon name="chevron" size={13} />
-                </span>
-              </div>
-
-              {isCategoriesOpen && (
-                <div className="space-y-1">
-                  {[
-                    { name: "SaaS Product", color: "purple" },
-                    { name: "Design System", color: "green" },
-                    { name: "Research", color: "amber" },
-                  ].map((cat) => (
-                    <button
-                      key={cat.name}
-                      onClick={() =>
-                        setSelectedCategory(selectedCategory === cat.name ? null : cat.name)
-                      }
-                      className={`category-item w-full flex items-center justify-between text-left cursor-pointer ${
-                        selectedCategory === cat.name ? "bg-[#35383a] text-white" : ""
-                      }`}
-                    >
-                      <span className="flex items-center gap-2">
-                        <span className={`category-dot ${cat.color}`} />
-                        {cat.name}
+                      <span className="project-hash flex items-center justify-center">
+                        <Icon name="zap" size={13} />
                       </span>
-                      <span>{selectedCategory === cat.name ? "✓" : "›"}</span>
+                      <span className="truncate">Today's Focus</span>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => handleQuickViewClick("my-tasks")}
+                    className={`project-item w-full flex items-center justify-between text-left cursor-pointer ${
+                      activeQuickView === "my-tasks" ? "current" : ""
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 truncate">
+                      <span className="project-hash flex items-center justify-center">
+                        <Icon name="check" size={13} />
+                      </span>
+                      <span className="truncate">My Tasks</span>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => handleQuickViewClick("recent-activity")}
+                    className={`project-item w-full flex items-center justify-between text-left cursor-pointer ${
+                      activeQuickView === "recent-activity" ? "current" : ""
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 truncate">
+                      <span className="project-hash flex items-center justify-center">
+                        <Icon name="refresh" size={13} />
+                      </span>
+                      <span className="truncate">Recent Activity</span>
+                    </div>
+                  </button>
+                </div>
+
+                <div className="sidebar-section-label categories-label">ACTIVE PROJECTS</div>
+                <div className="space-y-1">
+                  {projectsList.slice(0, 5).map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => router.push(`/projects?id=${p.id}`)}
+                      className="project-item w-full flex items-center justify-between text-left cursor-pointer"
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <span className="project-hash">#</span>
+                        <span className="truncate">{p.name}</span>
+                      </div>
+                      <b>{p.taskCount}</b>
                     </button>
                   ))}
                 </div>
-              )}
-            </>
-          )}
+              </>
+            ) : (
+              <>
+                <div className="workspace-switch">
+                  <button
+                    className={workspaceTab === "Team" ? "selected" : ""}
+                    onClick={() => setWorkspaceTab("Team")}
+                  >
+                    Team
+                  </button>
+                  <button
+                    className={workspaceTab === "Personal" ? "selected" : ""}
+                    onClick={() => setWorkspaceTab("Personal")}
+                  >
+                    Personal
+                  </button>
+                </div>
 
-          <div className="sidebar-bottom">
-            <div
-              className="storage-card cursor-pointer hover:border-violet-500/50 transition"
-              onClick={() => setShowStorageModal(true)}
-              title="Click to view workspace storage details"
-            >
-              <div className="storage-icon">
-                <Icon name="folder" size={16} />
-              </div>
-              <div>
-                <strong>Workspace storage</strong>
-                <small>68% of 10 GB used</small>
-                <div className="storage-track">
-                  <i />
+                <label className="project-search">
+                  <Icon name="search" size={16} />
+                  <input
+                    placeholder="Search projects..."
+                    value={projectSearchQuery}
+                    onChange={(e) => setProjectSearchQuery(e.target.value)}
+                  />
+                  <kbd>⌘ K</kbd>
+                </label>
+
+                <div
+                  className="sidebar-section-label cursor-pointer flex items-center justify-between"
+                  onClick={() => setIsRecentOpen(!isRecentOpen)}
+                >
+                  <span>RECENT</span>
+                  <span
+                    className={`transform transition-transform ${isRecentOpen ? "rotate-0" : "-rotate-90"}`}
+                  >
+                    <Icon name="chevron" size={13} />
+                  </span>
+                </div>
+
+                {isRecentOpen && (
+                  <div className="space-y-1">
+                    {filteredProjectsList.map((p) => {
+                      const isSelected =
+                        pathname === "/projects" &&
+                        (searchParams.get("id") === p.id ||
+                          (!searchParams.get("id") && projectsList[0]?.id === p.id));
+                      return (
+                        <button
+                          key={p.id}
+                          onClick={() => router.push(`/projects?id=${p.id}`)}
+                          className={`project-item w-full flex items-center justify-between text-left cursor-pointer ${
+                            isSelected ? "current" : ""
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 truncate">
+                            <span className="project-hash">#</span>
+                            <span className="truncate">{p.name}</span>
+                          </div>
+                          <b>{p.taskCount}</b>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <div
+                  className="sidebar-section-label categories-label cursor-pointer flex items-center justify-between"
+                  onClick={() => setIsCategoriesOpen(!isCategoriesOpen)}
+                >
+                  <span>CATEGORIES</span>
+                  <span
+                    className={`transform transition-transform ${
+                      isCategoriesOpen ? "rotate-0" : "-rotate-90"
+                    }`}
+                  >
+                    <Icon name="chevron" size={13} />
+                  </span>
+                </div>
+
+                {isCategoriesOpen && (
+                  <div className="space-y-1">
+                    {[
+                      { name: "SaaS Product", color: "purple" },
+                      { name: "Design System", color: "green" },
+                      { name: "Research", color: "amber" },
+                    ].map((cat) => (
+                      <button
+                        key={cat.name}
+                        onClick={() =>
+                          setSelectedCategory(selectedCategory === cat.name ? null : cat.name)
+                        }
+                        className={`category-item w-full flex items-center justify-between text-left cursor-pointer ${
+                          selectedCategory === cat.name ? "bg-[#35383a] text-white" : ""
+                        }`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <span className={`category-dot ${cat.color}`} />
+                          {cat.name}
+                        </span>
+                        <span>{selectedCategory === cat.name ? "✓" : "›"}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
+            <div className="sidebar-bottom">
+              <div
+                className="storage-card cursor-pointer hover:border-violet-500/50 transition"
+                onClick={() => setShowStorageModal(true)}
+                title="Click to view workspace storage details"
+              >
+                <div className="storage-icon">
+                  <Icon name="folder" size={16} />
+                </div>
+                <div>
+                  <strong>Workspace storage</strong>
+                  <small>68% of 10 GB used</small>
+                  <div className="storage-track">
+                    <i />
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <button
-              className="new-project cursor-pointer hover:bg-violet-600/20 transition"
-              onClick={() => {
-                setNewProjectNameInput("");
-                setNewProjectDescInput("");
-                setShowNewProjectModal(true);
-              }}
-            >
-              <Icon name="plus" size={16} /> New project
-            </button>
-
-            <div className="profile-row relative">
-              <Avatar initials={userInitials} />
-              <div className="min-w-0 flex-1">
-                <strong className="truncate">{userName}</strong>
-                <small className="truncate block">{userEmail || "Free workspace"}</small>
-              </div>
               <button
-                className="icon-button cursor-pointer"
-                onClick={() => setShowProfileMenu(!showProfileMenu)}
+                className="new-project cursor-pointer hover:bg-violet-600/20 transition"
+                onClick={() => {
+                  setNewProjectNameInput("");
+                  setNewProjectDescInput("");
+                  setShowNewProjectModal(true);
+                }}
               >
-                <Icon name="more" />
+                <Icon name="plus" size={16} /> New project
               </button>
 
-              {showProfileMenu && (
-                <>
-                  <div className="fixed inset-0 z-20" onClick={() => setShowProfileMenu(false)} />
-                  <div className="absolute bottom-12 right-2 z-30 w-40 rounded-xl border border-[var(--line)] bg-[var(--card)] p-2 shadow-xl text-xs text-white">
-                    <button
-                      onClick={() =>
-                        authClient.signOut({
-                          fetchOptions: { onSuccess: () => router.push("/login") },
-                        })
-                      }
-                      className="w-full text-left px-3 py-2 rounded-lg text-red-400 hover:bg-[#35383a] transition cursor-pointer"
-                    >
-                      Sign out
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        </aside>
+              <div className="profile-row relative">
+                <Avatar initials={userInitials} />
+                <div className="min-w-0 flex-1">
+                  <strong className="truncate">{userName}</strong>
+                  <small className="truncate block">{userEmail || "Free workspace"}</small>
+                </div>
+                <button
+                  className="icon-button cursor-pointer"
+                  onClick={() => setShowProfileMenu(!showProfileMenu)}
+                >
+                  <Icon name="more" />
+                </button>
 
-        <section className="main-content">
+                {showProfileMenu && (
+                  <>
+                    <div className="fixed inset-0 z-20" onClick={() => setShowProfileMenu(false)} />
+                    <div className="absolute bottom-12 right-2 z-30 w-40 rounded-xl border border-[var(--line)] bg-[var(--card)] p-2 shadow-xl text-xs text-white">
+                      <button
+                        onClick={() =>
+                          authClient.signOut({
+                            fetchOptions: { onSuccess: () => router.push("/login") },
+                          })
+                        }
+                        className="w-full text-left px-3 py-2 rounded-lg text-red-400 hover:bg-[#35383a] transition cursor-pointer"
+                      >
+                        Sign out
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </aside>
+        )}
+
+        <section className="main-content" style={{ minWidth: 0, width: "100%" }}>
           <header className="topbar">
             <div className="breadcrumbs">
               <span className="capitalize">{pathname.replace("/", "")}</span>
