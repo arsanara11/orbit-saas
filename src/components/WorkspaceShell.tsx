@@ -1,10 +1,12 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
-import { getInitialWorkspaceData, createProjectAction } from "@/app/actions";
+import {
+  getInitialWorkspaceData,
+  createProjectAction,
+} from "@/app/actions";
 
 type ProjectType = {
   id: string;
@@ -22,6 +24,13 @@ const navItems = [
   { label: "Messages", icon: "message", href: "/messages" },
   { label: "Calendar", icon: "calendar", href: "/calendar" },
   { label: "Settings", icon: "settings", href: "/settings" },
+];
+
+const teamMembers = [
+  { name: "Anisa Nabila", role: "Project Lead", initials: "AN", email: "anisa@orbit.app" },
+  { name: "Ahmad Rizky", role: "Frontend Developer", initials: "AR", email: "rizky@orbit.app" },
+  { name: "M. Kenzie", role: "UI/UX Designer", initials: "MK", email: "kenzie@orbit.app" },
+  { name: "Jasmine L.", role: "Backend Developer", initials: "JL", email: "jasmine@orbit.app" },
 ];
 
 function Icon({ name, size = 18 }: { name: string; size?: number }) {
@@ -93,6 +102,14 @@ function Icon({ name, size = 18 }: { name: string; size?: number }) {
       </>
     ),
     spark: <path d="m12 2 1.7 7.3L21 12l-7.3 1.7L12 21l-1.7-7.3L3 12l7.3-2.7Z" />,
+    zap: <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />,
+    check: <path d="m5 12 4 4L19 6" />,
+    refresh: (
+      <>
+        <path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.8 1 6.5 2.5L21 8" />
+        <path d="M21 3v5h-5" />
+      </>
+    ),
   };
   return <svg {...common}>{paths[name] || paths.grid}</svg>;
 }
@@ -127,13 +144,19 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
   const [isRecentOpen, setIsRecentOpen] = useState(true);
   const [isCategoriesOpen, setIsCategoriesOpen] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [activeQuickView, setActiveQuickView] = useState<string>("todays-focus");
 
   const [showWorkspaceMenu, setShowWorkspaceMenu] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [showMembersModal, setShowMembersModal] = useState(false);
+  const [showStorageModal, setShowStorageModal] = useState(false);
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
   const [newProjectNameInput, setNewProjectNameInput] = useState("");
   const [newProjectDescInput, setNewProjectDescInput] = useState("");
+
+  const activeProjectId = searchParams.get("id");
+  const isOverviewPage = pathname.startsWith("/overview");
 
   useEffect(() => {
     if (!isPending && !session) {
@@ -149,10 +172,20 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
             return {
               id: p.id,
               name: p.name,
-              description: isPersonal && p.description ? p.description.replace("[PERSONAL]", "").trim() : p.description || "",
+              description:
+                isPersonal && p.description
+                  ? p.description.replace("[PERSONAL]", "").trim()
+                  : p.description || "",
               taskCount: p.tasks ? p.tasks.length : 0,
               type: isPersonal ? "Personal" : "Team",
-              category: idx === 0 ? "SaaS Product" : idx === 1 ? "Design System" : idx === 2 ? "Research" : "General",
+              category:
+                idx === 0
+                  ? "SaaS Product"
+                  : idx === 1
+                  ? "Design System"
+                  : idx === 2
+                  ? "Research"
+                  : "General",
             };
           });
           setProjectsList(formattedProjects);
@@ -165,6 +198,14 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
   const userName = session?.user?.name || "User";
   const userEmail = session?.user?.email || "";
 
+  const currentProjectName = useMemo(() => {
+    if (activeProjectId) {
+      const found = projectsList.find((p) => p.id === activeProjectId);
+      if (found) return found.name;
+    }
+    return projectsList[0]?.name || "Orbit Workspace";
+  }, [projectsList, activeProjectId]);
+
   const filteredProjectsList = useMemo(() => {
     return projectsList.filter((p) => {
       const matchTab = p.type === workspaceTab;
@@ -174,6 +215,18 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
     });
   }, [projectsList, workspaceTab, projectSearchQuery, selectedCategory]);
 
+  function handleQuickViewClick(sectionId: string) {
+    setActiveQuickView(sectionId);
+    if (!isOverviewPage) {
+      router.push(`/overview#${sectionId}`);
+      return;
+    }
+    const targetEl = document.getElementById(sectionId);
+    if (targetEl) {
+      targetEl.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }
+
   async function handleCreateNewProjectSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!newProjectNameInput.trim()) return;
@@ -181,9 +234,7 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
     try {
       const rawDesc = newProjectDescInput.trim();
 
-      const created = await createProjectAction(
-        newProjectNameInput.trim()
-      );
+      const created = await createProjectAction(newProjectNameInput.trim());
 
       const newProjUI: ProjectType = {
         id: created.id,
@@ -218,9 +269,15 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
   return (
     <main className={`orbit-app ${dark ? "dark" : "light"}`}>
       <div className="browser-bar">
-        <div className="traffic-lights"><i /><i /><i /></div>
+        <div className="traffic-lights">
+          <i />
+          <i />
+          <i />
+        </div>
         <div className="browser-tab">
-          <span className="brand-mini"><Icon name="spark" size={12} /></span>
+          <span className="brand-mini">
+            <Icon name="spark" size={12} />
+          </span>
           Orbit · Workspace <b>×</b>
         </div>
         <span className="browser-plus">+</span>
@@ -232,25 +289,33 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
 
       <div className="app-layout">
         <aside className="rail">
-          <div className="brand-mark"><Icon name="spark" size={22} /></div>
+          <div className="brand-mark">
+            <Icon name="spark" size={22} />
+          </div>
           <div className="rail-nav">
             {navItems.map((item) => {
               const active = pathname.startsWith(item.href);
               return (
-                <Link
+                <button
                   key={item.label}
-                  href={item.href}
                   title={item.label}
+                  onClick={() => router.push(item.href)}
                   className={active ? "rail-active" : ""}
                 >
                   <Icon name={item.icon} />
-                </Link>
+                </button>
               );
             })}
           </div>
           <div className="rail-bottom">
-            <button title="Help"><span>?</span></button>
-            <button className="rail-moon" title="Toggle theme" onClick={() => setDark(!dark)}>
+            <button title="Help">
+              <span>?</span>
+            </button>
+            <button
+              className="rail-moon"
+              title="Toggle theme"
+              onClick={() => setDark(!dark)}
+            >
               <Icon name="moon" />
             </button>
           </div>
@@ -260,128 +325,243 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
           <div className="side-heading">
             <div>
               <span className="eyebrow">WORKSPACE</span>
-              <h2>Projects</h2>
+              <h2>{isOverviewPage ? "Overview" : "Projects"}</h2>
             </div>
-            <button
-              className="icon-button cursor-pointer"
-              onClick={() => setShowWorkspaceMenu(!showWorkspaceMenu)}
-            >
-              <Icon name="more" />
-            </button>
+            <div className="relative">
+              <button
+                className="icon-button cursor-pointer"
+                onClick={() => setShowWorkspaceMenu(!showWorkspaceMenu)}
+                title="Workspace options"
+              >
+                <Icon name="more" />
+              </button>
 
-            {showWorkspaceMenu && (
-              <>
-                <div className="fixed inset-0 z-20" onClick={() => setShowWorkspaceMenu(false)} />
-                <div className="absolute top-12 right-4 z-30 w-48 rounded-xl border border-[var(--line)] bg-[var(--card)] p-2 shadow-2xl text-xs text-white">
+              {showWorkspaceMenu && (
+                <>
+                  <div className="fixed inset-0 z-20" onClick={() => setShowWorkspaceMenu(false)} />
+                  <div className="absolute top-8 right-0 z-30 w-52 rounded-xl border border-[var(--line)] bg-[var(--card)] p-2 shadow-2xl text-xs text-white space-y-1">
+                    <button
+                      onClick={() => {
+                        setShowWorkspaceMenu(false);
+                        setShowNewProjectModal(true);
+                      }}
+                      className="w-full text-left px-3 py-2 rounded-lg hover:bg-[#35383a] transition flex items-center gap-2 cursor-pointer"
+                    >
+                      <Icon name="plus" size={14} /> Create New Project
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowWorkspaceMenu(false);
+                        setShowMembersModal(true);
+                      }}
+                      className="w-full text-left px-3 py-2 rounded-lg hover:bg-[#35383a] transition flex items-center gap-2 cursor-pointer"
+                    >
+                      <Icon name="spark" size={14} /> Manage Members
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowWorkspaceMenu(false);
+                        setShowStorageModal(true);
+                      }}
+                      className="w-full text-left px-3 py-2 rounded-lg hover:bg-[#35383a] transition flex items-center gap-2 cursor-pointer"
+                    >
+                      <Icon name="folder" size={14} /> Workspace Storage
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          {isOverviewPage ? (
+            <>
+              <div className="sidebar-section-label">QUICK VIEWS</div>
+              <div className="space-y-1">
+                <button
+                  onClick={() => handleQuickViewClick("todays-focus")}
+                  className={`project-item w-full flex items-center justify-between text-left cursor-pointer ${
+                    activeQuickView === "todays-focus" ? "current" : ""
+                  }`}
+                >
+                  <div className="flex items-center gap-2 truncate">
+                    <span className="project-hash flex items-center justify-center">
+                      <Icon name="zap" size={13} />
+                    </span>
+                    <span className="truncate">Today's Focus</span>
+                  </div>
+                </button>
+                <button
+                  onClick={() => handleQuickViewClick("my-tasks")}
+                  className={`project-item w-full flex items-center justify-between text-left cursor-pointer ${
+                    activeQuickView === "my-tasks" ? "current" : ""
+                  }`}
+                >
+                  <div className="flex items-center gap-2 truncate">
+                    <span className="project-hash flex items-center justify-center">
+                      <Icon name="check" size={13} />
+                    </span>
+                    <span className="truncate">My Tasks</span>
+                  </div>
+                </button>
+                <button
+                  onClick={() => handleQuickViewClick("recent-activity")}
+                  className={`project-item w-full flex items-center justify-between text-left cursor-pointer ${
+                    activeQuickView === "recent-activity" ? "current" : ""
+                  }`}
+                >
+                  <div className="flex items-center gap-2 truncate">
+                    <span className="project-hash flex items-center justify-center">
+                      <Icon name="refresh" size={13} />
+                    </span>
+                    <span className="truncate">Recent Activity</span>
+                  </div>
+                </button>
+              </div>
+
+              <div className="sidebar-section-label categories-label">ACTIVE PROJECTS</div>
+              <div className="space-y-1">
+                {projectsList.slice(0, 5).map((p) => (
                   <button
-                    onClick={() => {
-                      setShowWorkspaceMenu(false);
-                      setShowNewProjectModal(true);
-                    }}
-                    className="w-full text-left px-3 py-2 rounded-lg hover:bg-[#35383a] transition flex items-center gap-2 cursor-pointer"
-                  >
-                    <Icon name="plus" size={14} /> Create New Project
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-
-          <div className="workspace-switch">
-            <button
-              className={workspaceTab === "Team" ? "selected" : ""}
-              onClick={() => setWorkspaceTab("Team")}
-            >
-              Team
-            </button>
-            <button
-              className={workspaceTab === "Personal" ? "selected" : ""}
-              onClick={() => setWorkspaceTab("Personal")}
-            >
-              Personal
-            </button>
-          </div>
-
-          <label className="project-search">
-            <Icon name="search" size={16} />
-            <input
-              placeholder="Search projects..."
-              value={projectSearchQuery}
-              onChange={(e) => setProjectSearchQuery(e.target.value)}
-            />
-            <kbd>⌘ K</kbd>
-          </label>
-
-          <div
-            className="sidebar-section-label cursor-pointer flex items-center justify-between"
-            onClick={() => setIsRecentOpen(!isRecentOpen)}
-          >
-            <span>RECENT</span>
-            <span className={`transform transition-transform ${isRecentOpen ? "rotate-0" : "-rotate-90"}`}>
-              <Icon name="chevron" size={13} />
-            </span>
-          </div>
-
-          {isRecentOpen && (
-            <div className="space-y-1">
-              {filteredProjectsList.map((p) => {
-                const isSelected = pathname === "/projects" && searchParams.get("id") === p.id;
-                return (
-                  <Link
                     key={p.id}
-                    href={`/projects?id=${p.id}`}
-                    className={`project-item w-full flex items-center justify-between text-left ${
-                      isSelected ? "current" : ""
-                    }`}
+                    onClick={() => router.push(`/projects?id=${p.id}`)}
+                    className="project-item w-full flex items-center justify-between text-left cursor-pointer"
                   >
                     <div className="flex items-center gap-2 truncate">
                       <span className="project-hash">#</span>
                       <span className="truncate">{p.name}</span>
                     </div>
                     <b>{p.taskCount}</b>
-                  </Link>
-                );
-              })}
-            </div>
-          )}
-
-          <div
-            className="sidebar-section-label categories-label cursor-pointer flex items-center justify-between"
-            onClick={() => setIsCategoriesOpen(!isCategoriesOpen)}
-          >
-            <span>CATEGORIES</span>
-            <span className={`transform transition-transform ${isCategoriesOpen ? "rotate-0" : "-rotate-90"}`}>
-              <Icon name="chevron" size={13} />
-            </span>
-          </div>
-
-          {isCategoriesOpen && (
-            <div className="space-y-1">
-              {[
-                { name: "SaaS Product", color: "purple" },
-                { name: "Design System", color: "green" },
-                { name: "Research", color: "amber" },
-              ].map((cat) => (
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="workspace-switch">
                 <button
-                  key={cat.name}
-                  onClick={() => setSelectedCategory(selectedCategory === cat.name ? null : cat.name)}
-                  className={`category-item w-full flex items-center justify-between text-left ${
-                    selectedCategory === cat.name ? "bg-[#35383a] text-white" : ""
+                  className={workspaceTab === "Team" ? "selected" : ""}
+                  onClick={() => setWorkspaceTab("Team")}
+                >
+                  Team
+                </button>
+                <button
+                  className={workspaceTab === "Personal" ? "selected" : ""}
+                  onClick={() => setWorkspaceTab("Personal")}
+                >
+                  Personal
+                </button>
+              </div>
+
+              <label className="project-search">
+                <Icon name="search" size={16} />
+                <input
+                  placeholder="Search projects..."
+                  value={projectSearchQuery}
+                  onChange={(e) => setProjectSearchQuery(e.target.value)}
+                />
+                <kbd>⌘ K</kbd>
+              </label>
+
+              <div
+                className="sidebar-section-label cursor-pointer flex items-center justify-between"
+                onClick={() => setIsRecentOpen(!isRecentOpen)}
+              >
+                <span>RECENT</span>
+                <span
+                  className={`transform transition-transform ${isRecentOpen ? "rotate-0" : "-rotate-90"}`}
+                >
+                  <Icon name="chevron" size={13} />
+                </span>
+              </div>
+
+              {isRecentOpen && (
+                <div className="space-y-1">
+                  {filteredProjectsList.map((p) => {
+                    const isSelected =
+                      pathname === "/projects" &&
+                      (searchParams.get("id") === p.id ||
+                        (!searchParams.get("id") && projectsList[0]?.id === p.id));
+                    return (
+                      <button
+                        key={p.id}
+                        onClick={() => router.push(`/projects?id=${p.id}`)}
+                        className={`project-item w-full flex items-center justify-between text-left cursor-pointer ${
+                          isSelected ? "current" : ""
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 truncate">
+                          <span className="project-hash">#</span>
+                          <span className="truncate">{p.name}</span>
+                        </div>
+                        <b>{p.taskCount}</b>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div
+                className="sidebar-section-label categories-label cursor-pointer flex items-center justify-between"
+                onClick={() => setIsCategoriesOpen(!isCategoriesOpen)}
+              >
+                <span>CATEGORIES</span>
+                <span
+                  className={`transform transition-transform ${
+                    isCategoriesOpen ? "rotate-0" : "-rotate-90"
                   }`}
                 >
-                  <span className="flex items-center gap-2">
-                    <span className={`category-dot ${cat.color}`} />
-                    {cat.name}
-                  </span>
-                  <span>{selectedCategory === cat.name ? "✓" : "›"}</span>
-                </button>
-              ))}
-            </div>
+                  <Icon name="chevron" size={13} />
+                </span>
+              </div>
+
+              {isCategoriesOpen && (
+                <div className="space-y-1">
+                  {[
+                    { name: "SaaS Product", color: "purple" },
+                    { name: "Design System", color: "green" },
+                    { name: "Research", color: "amber" },
+                  ].map((cat) => (
+                    <button
+                      key={cat.name}
+                      onClick={() =>
+                        setSelectedCategory(selectedCategory === cat.name ? null : cat.name)
+                      }
+                      className={`category-item w-full flex items-center justify-between text-left cursor-pointer ${
+                        selectedCategory === cat.name ? "bg-[#35383a] text-white" : ""
+                      }`}
+                    >
+                      <span className="flex items-center gap-2">
+                        <span className={`category-dot ${cat.color}`} />
+                        {cat.name}
+                      </span>
+                      <span>{selectedCategory === cat.name ? "✓" : "›"}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
           )}
 
           <div className="sidebar-bottom">
+            <div
+              className="storage-card cursor-pointer hover:border-violet-500/50 transition"
+              onClick={() => setShowStorageModal(true)}
+              title="Click to view workspace storage details"
+            >
+              <div className="storage-icon">
+                <Icon name="folder" size={16} />
+              </div>
+              <div>
+                <strong>Workspace storage</strong>
+                <small>68% of 10 GB used</small>
+                <div className="storage-track">
+                  <i />
+                </div>
+              </div>
+            </div>
+
             <button
-              className="new-project cursor-pointer"
+              className="new-project cursor-pointer hover:bg-violet-600/20 transition"
               onClick={() => {
                 setNewProjectNameInput("");
                 setNewProjectDescInput("");
@@ -391,7 +571,7 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
               <Icon name="plus" size={16} /> New project
             </button>
 
-            <div className="profile-row">
+            <div className="profile-row relative">
               <Avatar initials={userInitials} />
               <div className="min-w-0 flex-1">
                 <strong className="truncate">{userName}</strong>
@@ -429,11 +609,22 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
           <header className="topbar">
             <div className="breadcrumbs">
               <span className="capitalize">{pathname.replace("/", "")}</span>
+              {pathname.startsWith("/projects") && (
+                <>
+                  <span className="crumb-slash">/</span>
+                  <strong>{currentProjectName}</strong>
+                </>
+              )}
             </div>
 
             <div className="top-actions">
-              <span className="last-updated"><i /> Saved just now</span>
-              <button className="top-icon cursor-pointer" onClick={() => setShowNotifications(!showNotifications)}>
+              <span className="last-updated">
+                <i /> Saved just now
+              </span>
+              <button
+                className="top-icon cursor-pointer"
+                onClick={() => setShowNotifications(!showNotifications)}
+              >
                 <Icon name="bell" />
                 <i />
               </button>
@@ -441,6 +632,12 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
                 <Icon name="moon" />
               </button>
               <Avatar initials={userInitials} />
+              <button
+                className="invite-button cursor-pointer"
+                onClick={() => setShowMembersModal(true)}
+              >
+                <Icon name="plus" size={15} /> Invite members
+              </button>
             </div>
 
             {showNotifications && (
@@ -448,21 +645,129 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
                 <div className="fixed inset-0 z-20" onClick={() => setShowNotifications(false)} />
                 <div className="notification-pop z-30">
                   <strong>Notifications</strong>
-                  <p><span className="notice-dot" /> All workspace services are operational.</p>
+                  <p>
+                    <span className="notice-dot" /> All workspace services are operational.
+                  </p>
                   <button onClick={() => setShowNotifications(false)}>Mark as read</button>
                 </div>
               </>
             )}
           </header>
 
-          <div className="p-6">{children}</div>
+          {children}
 
           <footer className="app-footer">
             <span>© 2026 Orbit Workspace</span>
-            <span><span className="footer-status" /> All changes saved</span>
+            <span>
+              <span className="footer-status" /> All changes saved
+            </span>
           </footer>
         </section>
       </div>
+
+      {showStorageModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6 shadow-2xl text-white space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-[var(--line)]">
+              <strong className="text-sm font-semibold">Workspace Storage Details</strong>
+              <button
+                onClick={() => setShowStorageModal(false)}
+                className="text-gray-400 hover:text-white cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="p-3 rounded-xl bg-[#1e2022] border border-[var(--line)] space-y-2">
+                <div className="flex justify-between font-medium">
+                  <span>Used Storage</span>
+                  <span className="text-violet-400">6.8 GB / 10 GB</span>
+                </div>
+                <div className="w-full bg-[#35383a] h-2 rounded-full overflow-hidden">
+                  <div className="bg-violet-500 h-full rounded-full w-[68%]" />
+                </div>
+              </div>
+
+              <div className="space-y-2 pt-1 text-gray-300">
+                <div className="flex justify-between p-2 rounded-lg bg-[#1e2022]/60">
+                  <span>Project Attachments & Media</span>
+                  <strong>4.2 GB</strong>
+                </div>
+                <div className="flex justify-between p-2 rounded-lg bg-[#1e2022]/60">
+                  <span>Task History & Logs</span>
+                  <strong>1.8 GB</strong>
+                </div>
+                <div className="flex justify-between p-2 rounded-lg bg-[#1e2022]/60">
+                  <span>Database Indexes</span>
+                  <strong>0.8 GB</strong>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-[var(--line)]">
+              <button
+                type="button"
+                onClick={() => setShowStorageModal(false)}
+                className="px-4 py-2 rounded-xl text-xs text-gray-300 hover:bg-[#35383a]"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  alert("Storage upgrade option selected.");
+                  setShowStorageModal(false);
+                }}
+                className="px-4 py-2 rounded-xl bg-violet-600 text-xs text-white font-medium hover:bg-violet-500"
+              >
+                Upgrade Plan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showMembersModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6 shadow-2xl text-white">
+            <div className="flex items-center justify-between pb-4 border-b border-[var(--line)]">
+              <strong className="text-sm font-semibold">Project Members</strong>
+              <button
+                onClick={() => setShowMembersModal(false)}
+                className="text-gray-400 hover:text-white cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="mt-4 space-y-3">
+              {teamMembers.map((m, idx) => (
+                <div
+                  key={m.email}
+                  className="flex items-center justify-between p-2.5 rounded-xl bg-[#1e2022] border border-[var(--line)]"
+                >
+                  <div className="flex items-center gap-3">
+                    <Avatar initials={m.initials} index={idx} />
+                    <div>
+                      <strong className="block text-xs font-semibold">{m.name}</strong>
+                      <span className="text-[10px] text-gray-400">{m.email}</span>
+                    </div>
+                  </div>
+                  <span className="text-[10px] rounded-md bg-[#35383a] px-2 py-1 text-violet-300">
+                    {m.role}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={() => setShowMembersModal(false)}
+              className="mt-6 w-full py-2.5 rounded-xl bg-violet-600 text-xs text-white font-semibold hover:bg-violet-500 transition cursor-pointer"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
 
       {showNewProjectModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-md">
@@ -472,7 +777,13 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
           >
             <div className="flex items-center justify-between pb-3 border-b border-[var(--line)]">
               <strong className="text-sm font-semibold">Create New Project</strong>
-              <button type="button" onClick={() => setShowNewProjectModal(false)} className="text-gray-400 hover:text-white cursor-pointer">✕</button>
+              <button
+                type="button"
+                onClick={() => setShowNewProjectModal(false)}
+                className="text-gray-400 hover:text-white cursor-pointer"
+              >
+                ✕
+              </button>
             </div>
 
             <div>
@@ -499,8 +810,19 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
             </div>
 
             <div className="flex justify-end gap-2 pt-3 border-t border-[var(--line)]">
-              <button type="button" onClick={() => setShowNewProjectModal(false)} className="px-4 py-2 rounded-xl text-xs text-gray-300 hover:bg-[#35383a]">Cancel</button>
-              <button type="submit" className="px-4 py-2 rounded-xl bg-violet-600 text-xs text-white font-medium hover:bg-violet-500">Create Project</button>
+              <button
+                type="button"
+                onClick={() => setShowNewProjectModal(false)}
+                className="px-4 py-2 rounded-xl text-xs text-gray-300 hover:bg-[#35383a]"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-2 rounded-xl bg-violet-600 text-xs text-white font-medium hover:bg-violet-500"
+              >
+                Create Project
+              </button>
             </div>
           </form>
         </div>
