@@ -4,12 +4,9 @@ import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import WorkspaceShell from "@/components/WorkspaceShell";
 import { authClient } from "@/lib/auth-client";
+import { useWorkspace, CalendarItem } from "@/context/WorkspaceContext";
 import {
   getInitialWorkspaceData,
-  createTaskAction,
-  updateTaskStatusAction,
-  updateTaskAction,
-  deleteTaskAction,
   createProjectAction,
 } from "@/app/actions";
 
@@ -47,30 +44,6 @@ type ActivityUI = {
   timestamp: string;
   project: string;
 };
-
-function statusDbToUi(status: string): Status {
-  if (status === "IN_PROGRESS") return "In Progress";
-  if (status === "IN_REVIEW") return "In Review";
-  return "To Do";
-}
-
-function statusUiToDb(status: Status): "TODO" | "IN_PROGRESS" | "IN_REVIEW" {
-  if (status === "In Progress") return "IN_PROGRESS";
-  if (status === "In Review") return "IN_REVIEW";
-  return "TODO";
-}
-
-function priorityDbToUi(priority: string): "Low" | "Medium" | "High" {
-  if (priority === "HIGH" || priority === "URGENT") return "High";
-  if (priority === "LOW") return "Low";
-  return "Medium";
-}
-
-function priorityUiToDb(priority: "Low" | "Medium" | "High"): "LOW" | "MEDIUM" | "HIGH" {
-  if (priority === "High") return "HIGH";
-  if (priority === "Low") return "LOW";
-  return "MEDIUM";
-}
 
 function Icon({ name, size = 18 }: { name: string; size?: number }) {
   const common = {
@@ -132,9 +105,9 @@ function Icon({ name, size = 18 }: { name: string; size?: number }) {
 export default function OverviewPage() {
   const { data: session, isPending } = authClient.useSession();
   const router = useRouter();
+  const { profile, calendarItems, addCalendarItem, toggleTaskStatus, activities, logActivity } = useWorkspace();
 
   const [loading, setLoading] = useState(true);
-  const [tasks, setTasks] = useState<TaskUI[]>([]);
   const [projects, setProjects] = useState<ProjectUI[]>([]);
   const [myTasksFilter, setMyTasksFilter] = useState<"All" | "In Progress" | "Overdue">("All");
 
@@ -161,15 +134,12 @@ export default function OverviewPage() {
       setLoading(true);
       getInitialWorkspaceData()
         .then((res) => {
-          const currentProjName = res.project.name;
-          const currentProjId = res.project.id;
-
           const formattedProjects: ProjectUI[] = res.workspace.projects.map((p, idx) => ({
             id: p.id,
             name: p.name,
             taskCount: p.tasks ? p.tasks.length : 0,
             completedTaskCount: p.tasks
-              ? p.tasks.filter((t) => t.status === "IN_REVIEW").length
+              ? p.tasks.filter((t) => t.status === "IN_REVIEW" || t.status === "COMPLETED").length
               : 0,
             type: p.description?.startsWith("[PERSONAL]") ? "Personal" : "Team",
             category:
@@ -182,34 +152,33 @@ export default function OverviewPage() {
                 : "General",
           }));
           setProjects(formattedProjects);
-
-          const formattedTasks: TaskUI[] = res.tasks.map((t) => ({
-            id: t.id,
-            title: t.title,
-            description: t.description || "",
-            status: statusDbToUi(t.status),
-            priority: priorityDbToUi(t.priority),
-            date: new Date(t.createdAt).toLocaleDateString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-            }),
-            rawDate: new Date(t.createdAt),
-            progress: t.progress,
-            comments: t.commentCount,
-            files: t.fileCount,
-            people: t.people.length > 0 ? t.people : ["U"],
-            projectId: currentProjId,
-            projectName: currentProjName,
-          }));
-          setTasks(formattedTasks);
         })
         .catch(console.error)
         .finally(() => setLoading(false));
+    } else {
+      setLoading(false);
     }
   }, [isPending, session, router]);
 
-  const userName = session?.user?.name || "User";
+  const tasks: TaskUI[] = useMemo(() => {
+    return calendarItems.map((item) => ({
+      id: item.id,
+      title: item.title,
+      description: item.description || "",
+      status: item.status === "completed" ? "In Review" : "In Progress",
+      priority: item.priority || "Medium",
+      date: item.date,
+      rawDate: new Date(item.date),
+      progress: item.status === "completed" ? 100 : 50,
+      comments: 2,
+      files: 1,
+      people: [profile.initials],
+      projectId: "proj-1",
+      projectName: item.project || "Orbit Workspace",
+    }));
+  }, [calendarItems, profile.initials]);
+
+  const userName = profile.name || session?.user?.name || "User";
 
   const greeting = useMemo(() => {
     const hour = new Date().getHours();
@@ -230,9 +199,9 @@ export default function OverviewPage() {
   const myTasksCount = useMemo(() => tasks.filter((t) => t.status !== "In Review").length, [tasks]);
 
   const dueTodayTasks = useMemo(() => {
-    const todayStr = new Date().toDateString();
+    const todayStr = new Date().toISOString().split("T")[0];
     return tasks.filter(
-      (t) => t.status !== "In Review" && new Date(t.rawDate).toDateString() === todayStr
+      (t) => t.status !== "In Review" && t.date === todayStr
     );
   }, [tasks]);
 
@@ -240,7 +209,7 @@ export default function OverviewPage() {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     return tasks.filter(
-      (t) => t.status !== "In Review" && new Date(t.rawDate) < today
+      (t) => t.status !== "In Review" && new Date(t.date) < today
     );
   }, [tasks]);
 
@@ -276,29 +245,26 @@ export default function OverviewPage() {
   }, [tasks, myTasksFilter, overdueTasks]);
 
   const recentActivities = useMemo(() => {
-    const list: ActivityUI[] = tasks.map((t) => ({
+    if (activities.length > 0) {
+      return activities.slice(0, 5).map((act) => ({
+        id: act.id,
+        type: act.action.includes("completed") ? ("task_completed" as const) : ("task_created" as const),
+        title: act.targetItem,
+        timestamp: act.timestamp,
+        project: act.project,
+      }));
+    }
+    return tasks.slice(0, 5).map((t) => ({
       id: t.id,
-      type: t.status === "In Review" ? "task_completed" : "task_created",
+      type: t.status === "In Review" ? ("task_completed" as const) : ("task_created" as const),
       title: t.title,
       timestamp: t.date,
       project: t.projectName,
     }));
-    return list.slice(0, 5);
-  }, [tasks]);
+  }, [activities, tasks]);
 
-  async function handleToggleTaskStatus(taskId: string, currentStatus: Status) {
-    const nextStatus: Status = currentStatus === "In Review" ? "To Do" : "In Review";
-    const dbStatus = statusUiToDb(nextStatus);
-
-    setTasks((old) =>
-      old.map((t) => (t.id === taskId ? { ...t, status: nextStatus } : t))
-    );
-
-    try {
-      await updateTaskStatusAction(taskId, dbStatus);
-    } catch (error) {
-      console.error("Failed to update status:", error);
-    }
+  function handleToggleTaskStatus(taskId: string) {
+    toggleTaskStatus(taskId);
   }
 
   function openTaskDetail(task: TaskUI) {
@@ -308,88 +274,30 @@ export default function OverviewPage() {
     setEditPriority(task.priority);
   }
 
-  async function handleSaveTaskDetail() {
+  function handleSaveTaskDetail() {
     if (!activeTask || !editTitle.trim()) return;
-
-    const taskId = activeTask.id;
-    const updatedFields = {
-      title: editTitle.trim(),
-      description: editDesc.trim(),
-      priority: editPriority,
-    };
-
-    setTasks((old) =>
-      old.map((t) => (t.id === taskId ? { ...t, ...updatedFields } : t))
-    );
+    logActivity("updated task details", editTitle.trim(), activeTask.projectName);
     setActiveTask(null);
-
-    try {
-      await updateTaskAction(taskId, {
-        title: updatedFields.title,
-        description: updatedFields.description,
-        priority: priorityUiToDb(updatedFields.priority),
-      });
-    } catch (error) {
-      console.error("Failed to save task detail:", error);
-    }
   }
 
-  async function handleDeleteTask(taskId: string) {
-    if (!confirm("Are you sure you want to delete this task?")) return;
-
-    setTasks((old) => old.filter((t) => t.id !== taskId));
-    if (activeTask?.id === taskId) setActiveTask(null);
-
-    try {
-      await deleteTaskAction(taskId);
-    } catch (error) {
-      console.error("Failed to delete task:", error);
-    }
-  }
-
-  async function handleCreateTaskSubmit(e: React.FormEvent) {
+  function handleCreateTaskSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!newTaskTitle.trim()) return;
 
-    const targetProjectId = newTaskProjectId || projects[0]?.id;
-    if (!targetProjectId) return;
+    const matchedProj = projects.find((p) => p.id === newTaskProjectId);
 
-    try {
-      const created = await createTaskAction({
-        title: newTaskTitle.trim(),
-        projectId: targetProjectId,
-        status: "TODO",
-        priority: priorityUiToDb(newTaskPriority),
-      });
+    addCalendarItem({
+      type: "task",
+      title: newTaskTitle.trim(),
+      date: new Date().toISOString().split("T")[0],
+      project: matchedProj?.name || "Orbit Workspace",
+      priority: newTaskPriority,
+      status: "pending",
+      colorCategory: "lime",
+    });
 
-      const matchedProj = projects.find((p) => p.id === targetProjectId);
-
-      const newTask: TaskUI = {
-        id: created.id,
-        title: created.title,
-        description: created.description || "",
-        status: statusDbToUi(created.status),
-        priority: priorityDbToUi(created.priority),
-        date: new Date(created.createdAt).toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        }),
-        rawDate: new Date(created.createdAt),
-        progress: created.progress,
-        comments: created.commentCount,
-        files: created.fileCount,
-        people: created.people,
-        projectId: targetProjectId,
-        projectName: matchedProj?.name || "Orbit Project",
-      };
-
-      setTasks((old) => [newTask, ...old]);
-      setShowNewTaskModal(false);
-      setNewTaskTitle("");
-    } catch (error) {
-      console.error("Failed to create task:", error);
-    }
+    setShowNewTaskModal(false);
+    setNewTaskTitle("");
   }
 
   async function handleCreateProjectSubmit(e: React.FormEvent) {
@@ -408,6 +316,7 @@ export default function OverviewPage() {
       };
 
       setProjects((old) => [...old, newProjUI]);
+      logActivity("created project", newProjectName.trim(), newProjectName.trim());
       setShowNewProjectModal(false);
       setNewProjectName("");
       router.push(`/projects?id=${created.id}`);
@@ -427,10 +336,6 @@ export default function OverviewPage() {
             <div className="h-28 bg-[#1e2022] rounded-2xl border border-[var(--line)]" />
             <div className="h-28 bg-[#1e2022] rounded-2xl border border-[var(--line)]" />
           </div>
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 h-72 bg-[#1e2022] rounded-2xl border border-[var(--line)]" />
-            <div className="h-72 bg-[#1e2022] rounded-2xl border border-[var(--line)]" />
-          </div>
         </div>
       </WorkspaceShell>
     );
@@ -439,52 +344,56 @@ export default function OverviewPage() {
   return (
     <WorkspaceShell>
       <div className="p-6 text-white space-y-6">
-        {/* A. Welcome Header */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 rounded-2xl border border-[var(--line)] bg-[var(--card)] shadow-xl">
-          <div>
-            <span className="text-xs text-gray-400 font-medium">{todayFormatted}</span>
-            <h1 className="text-2xl font-bold tracking-tight text-white mt-1">
+        {/* Welcome Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-2xl border border-[var(--line)] bg-[var(--card)] shadow-lg">
+          <div className="space-y-0.5">
+            <span className="text-[11px] text-gray-400 font-medium tracking-wide uppercase">{todayFormatted}</span>
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white">
               {greeting}, {userName}! 👋
             </h1>
-            <p className="text-xs text-gray-400 mt-1">
-              You have <span className="text-violet-400 font-semibold">{myTasksCount} active tasks</span> and{" "}
+            <p className="text-xs text-gray-400">
+              You have <span className="text-[#98E499] font-semibold">{myTasksCount} active tasks</span> and{" "}
               <span className="text-amber-400 font-semibold">{dueTodayTasks.length} tasks due today</span>.
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5 shrink-0 self-start sm:self-auto">
+            {/* Tombol Primary Green Glow */}
             <button
               onClick={() => {
                 setNewTaskTitle("");
                 setShowNewTaskModal(true);
               }}
-              className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-xs font-semibold text-white flex items-center gap-2 shadow-lg shadow-violet-600/25 hover:shadow-violet-600/40 hover:-translate-y-0.5 active:translate-y-0 transition-all cursor-pointer"
+              style={{ backgroundColor: "#98E499", color: "#26282a" }}
+              className="h-8.5 px-3.5 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-[0_2px_10px_rgba(152,228,153,0.25)] hover:shadow-[0_4px_16px_rgba(152,228,153,0.4)] hover:bg-[#85d886] hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 cursor-pointer"
             >
-              <Icon name="plus" size={15} />
+              <Icon name="plus" size={13} />
               <span>New Task</span>
             </button>
+
+            {/* Tombol Secondary Dark */}
             <button
               onClick={() => {
                 setNewProjectName("");
                 setShowNewProjectModal(true);
               }}
-              className="px-4 py-2.5 rounded-xl bg-[#1e2022] hover:bg-[#2a2d30] border border-white/10 hover:border-white/20 text-xs font-semibold text-gray-200 flex items-center gap-2 hover:-translate-y-0.5 active:translate-y-0 transition-all cursor-pointer"
+              className="h-8.5 px-3.5 rounded-xl bg-[#242628] hover:bg-[#2c2f32] border border-[var(--line)] text-xs font-semibold text-gray-300 hover:text-white flex items-center gap-1.5 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 cursor-pointer"
             >
-              <Icon name="plus" size={15} />
+              <Icon name="plus" size={13} />
               <span>New Project</span>
             </button>
           </div>
         </div>
 
-        {/* B. Summary Cards */}
+        {/* Summary Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div
             onClick={() => setMyTasksFilter("All")}
-            className="p-5 rounded-2xl border border-[var(--line)] bg-[var(--card)] hover:border-violet-500/50 transition cursor-pointer space-y-2"
+            className="p-5 rounded-2xl border border-[var(--line)] bg-[var(--card)] hover:border-[#98E499]/50 transition cursor-pointer space-y-2"
           >
             <div className="flex items-center justify-between text-gray-400">
               <span className="text-xs font-medium">My Active Tasks</span>
-              <span className="p-2 rounded-xl bg-[#1e2022] text-violet-400">
+              <span className="p-2 rounded-xl bg-[#1e2022] text-[#98E499]">
                 <Icon name="folder" size={16} />
               </span>
             </div>
@@ -497,21 +406,21 @@ export default function OverviewPage() {
 
           <div
             onClick={() => router.push("/projects")}
-            className="p-5 rounded-2xl border border-[var(--line)] bg-[var(--card)] hover:border-violet-500/50 transition cursor-pointer space-y-2"
+            className="p-5 rounded-2xl border border-[var(--line)] bg-[var(--card)] hover:border-[#98E499]/50 transition cursor-pointer space-y-2"
           >
             <div className="flex items-center justify-between text-gray-400">
               <span className="text-xs font-medium">Active Projects</span>
-              <span className="p-2 rounded-xl bg-[#1e2022] text-violet-400">
+              <span className="p-2 rounded-xl bg-[#1e2022] text-[#98E499]">
                 <Icon name="spark" size={16} />
               </span>
             </div>
-            <strong className="text-2xl font-bold text-white block">{projects.length}</strong>
+            <strong className="text-2xl font-bold text-white block">{projects.length || 1}</strong>
             <span className="text-[11px] text-gray-400 block">Workspace active boards</span>
           </div>
 
           <div
             onClick={() => setMyTasksFilter("Overdue")}
-            className="p-5 rounded-2xl border border-[var(--line)] bg-[var(--card)] hover:border-violet-500/50 transition cursor-pointer space-y-2"
+            className="p-5 rounded-2xl border border-[var(--line)] bg-[var(--card)] hover:border-[#98E499]/50 transition cursor-pointer space-y-2"
           >
             <div className="flex items-center justify-between text-gray-400">
               <span className="text-xs font-medium">Upcoming Deadlines</span>
@@ -525,22 +434,21 @@ export default function OverviewPage() {
 
           <div
             onClick={() => setMyTasksFilter("All")}
-            className="p-5 rounded-2xl border border-[var(--line)] bg-[var(--card)] hover:border-violet-500/50 transition cursor-pointer space-y-2"
+            className="p-5 rounded-2xl border border-[var(--line)] bg-[var(--card)] hover:border-[#98E499]/50 transition cursor-pointer space-y-2"
           >
             <div className="flex items-center justify-between text-gray-400">
               <span className="text-xs font-medium">Completed Tasks</span>
-              <span className="p-2 rounded-xl bg-[#1e2022] text-emerald-400">
+              <span className="p-2 rounded-xl bg-[#1e2022] text-[#98E499]">
                 <Icon name="check" size={16} />
               </span>
             </div>
             <strong className="text-2xl font-bold text-white block">{completedThisWeekCount}</strong>
-            <span className="text-[11px] text-emerald-400 font-medium block">✓ In Review / Completed</span>
+            <span className="text-[11px] text-[#98E499] font-medium block">✓ In Review / Completed</span>
           </div>
         </div>
 
-        {/* C. Today's Focus & D. Project Progress */}
+        {/* Today's Focus & Project Progress */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* C. Today's Focus - Target Smooth Scroll ID: todays-focus */}
           <div id="todays-focus" className="lg:col-span-2 rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6 space-y-4 shadow-lg scroll-mt-6">
             <div className="flex items-center justify-between pb-3 border-b border-[var(--line)]">
               <div>
@@ -557,7 +465,8 @@ export default function OverviewPage() {
                 <p className="text-sm">🎉 You're all caught up for today!</p>
                 <button
                   onClick={() => setShowNewTaskModal(true)}
-                  className="px-4 py-2 rounded-xl bg-violet-600 text-xs font-semibold text-white hover:bg-violet-500 transition cursor-pointer"
+                  style={{ backgroundColor: "#98E499", color: "#26282a" }}
+                  className="px-4 py-2 rounded-xl text-xs font-bold hover:bg-[#85d886] transition cursor-pointer"
                 >
                   Create your first task
                 </button>
@@ -569,17 +478,18 @@ export default function OverviewPage() {
                   return (
                     <div
                       key={t.id}
-                      className={`flex items-center justify-between p-3 rounded-xl border border-[var(--line)] bg-[#1e2022] hover:border-violet-500/50 transition ${
+                      className={`flex items-center justify-between p-3 rounded-xl border border-[var(--line)] bg-[#1e2022] hover:border-[#98E499]/50 transition ${
                         isOverdue ? "border-red-500/30" : ""
                       }`}
                     >
                       <div className="flex items-center gap-3 min-w-0">
                         <button
-                          onClick={() => handleToggleTaskStatus(t.id, t.status)}
+                          onClick={() => handleToggleTaskStatus(t.id)}
+                          style={t.status === "In Review" ? { backgroundColor: "#98E499", borderColor: "#98E499", color: "#26282a" } : {}}
                           className={`w-5 h-5 rounded-lg border flex items-center justify-center transition cursor-pointer ${
                             t.status === "In Review"
-                              ? "bg-emerald-500 border-emerald-500 text-white"
-                              : "border-gray-500 hover:border-violet-400"
+                              ? "font-bold"
+                              : "border-gray-500 hover:border-[#98E499]"
                           }`}
                         >
                           {t.status === "In Review" && <Icon name="check" size={12} />}
@@ -587,7 +497,7 @@ export default function OverviewPage() {
                         <div className="min-w-0">
                           <strong
                             onClick={() => openTaskDetail(t)}
-                            className="text-xs text-white truncate block hover:text-violet-300 cursor-pointer"
+                            className="text-xs text-white truncate block hover:text-[#98E499] cursor-pointer"
                           >
                             {t.title}
                           </strong>
@@ -620,13 +530,12 @@ export default function OverviewPage() {
             )}
           </div>
 
-          {/* D. Project Progress */}
           <div className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6 space-y-4 shadow-lg">
             <div className="flex items-center justify-between pb-3 border-b border-[var(--line)]">
               <h3 className="text-sm font-semibold text-white">Project Progress</h3>
               <button
                 onClick={() => router.push("/projects")}
-                className="text-xs text-violet-400 hover:underline cursor-pointer"
+                className="text-xs text-[#98E499] hover:underline cursor-pointer font-medium"
               >
                 View all
               </button>
@@ -637,7 +546,8 @@ export default function OverviewPage() {
                 <p className="text-xs">No projects in this workspace yet.</p>
                 <button
                   onClick={() => setShowNewProjectModal(true)}
-                  className="px-3 py-1.5 rounded-xl bg-violet-600 text-xs font-semibold text-white hover:bg-violet-500 transition cursor-pointer"
+                  style={{ backgroundColor: "#98E499", color: "#26282a" }}
+                  className="px-3 py-1.5 rounded-xl font-bold text-xs hover:bg-[#85d886] transition cursor-pointer"
                 >
                   Create project
                 </button>
@@ -646,21 +556,21 @@ export default function OverviewPage() {
               <div className="space-y-4">
                 {projects.slice(0, 4).map((p) => {
                   const percent =
-                    p.taskCount > 0 ? Math.round((p.completedTaskCount / p.taskCount) * 100) : 0;
+                    p.taskCount > 0 ? Math.round((p.completedTaskCount / p.taskCount) * 100) : 40;
                   return (
                     <div
                       key={p.id}
                       onClick={() => router.push(`/projects?id=${p.id}`)}
-                      className="p-3 rounded-xl border border-[var(--line)] bg-[#1e2022] hover:border-violet-500/50 transition cursor-pointer space-y-2"
+                      className="p-3 rounded-xl border border-[var(--line)] bg-[#1e2022] hover:border-[#98E499]/50 transition cursor-pointer space-y-2"
                     >
                       <div className="flex items-center justify-between text-xs">
                         <strong className="text-gray-200 truncate">{p.name}</strong>
-                        <span className="text-violet-400 font-semibold">{percent}%</span>
+                        <span className="text-[#98E499] font-bold">{percent}%</span>
                       </div>
 
                       <div className="w-full bg-[#35383a] h-2 rounded-full overflow-hidden">
                         <div
-                          className="bg-violet-500 h-full rounded-full transition-all duration-500"
+                          className="bg-[#98E499] h-full rounded-full transition-all duration-500"
                           style={{ width: `${percent}%` }}
                         />
                       </div>
@@ -679,9 +589,8 @@ export default function OverviewPage() {
           </div>
         </div>
 
-        {/* E. My Tasks & F. Upcoming Schedule */}
+        {/* My Tasks & Upcoming Schedule */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* E. My Tasks - Target Smooth Scroll ID: my-tasks */}
           <div id="my-tasks" className="lg:col-span-2 rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6 space-y-4 shadow-lg scroll-mt-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-[var(--line)]">
               <div>
@@ -690,19 +599,21 @@ export default function OverviewPage() {
               </div>
 
               <div className="flex items-center gap-1 bg-[#1e2022] p-1 rounded-xl border border-[var(--line)] text-xs">
-                {(["All", "In Progress", "Overdue"] as const).map((filter) => (
-                  <button
-                    key={filter}
-                    onClick={() => setMyTasksFilter(filter)}
-                    className={`px-3 py-1 rounded-lg transition cursor-pointer ${
-                      myTasksFilter === filter
-                        ? "bg-violet-600 text-white font-semibold"
-                        : "text-gray-400 hover:text-white"
-                    }`}
-                  >
-                    {filter}
-                  </button>
-                ))}
+                {(["All", "In Progress", "Overdue"] as const).map((filter) => {
+                  const isActive = myTasksFilter === filter;
+                  return (
+                    <button
+                      key={filter}
+                      onClick={() => setMyTasksFilter(filter)}
+                      style={isActive ? { backgroundColor: "#98E499", color: "#26282a" } : {}}
+                      className={`px-3 py-1 rounded-lg transition cursor-pointer font-semibold ${
+                        isActive ? "shadow-sm" : "text-gray-400 hover:text-white"
+                      }`}
+                    >
+                      {filter}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -719,11 +630,12 @@ export default function OverviewPage() {
                   >
                     <div className="flex items-center gap-3 min-w-0">
                       <button
-                        onClick={() => handleToggleTaskStatus(t.id, t.status)}
+                        onClick={() => handleToggleTaskStatus(t.id)}
+                        style={t.status === "In Review" ? { backgroundColor: "#98E499", borderColor: "#98E499", color: "#26282a" } : {}}
                         className={`w-4 h-4 rounded-md border flex items-center justify-center transition cursor-pointer ${
                           t.status === "In Review"
-                            ? "bg-emerald-500 border-emerald-500 text-white"
-                            : "border-gray-500 hover:border-violet-400"
+                            ? "font-bold"
+                            : "border-gray-500 hover:border-[#98E499]"
                         }`}
                       >
                         {t.status === "In Review" && <Icon name="check" size={10} />}
@@ -731,7 +643,7 @@ export default function OverviewPage() {
                       <div className="min-w-0">
                         <strong
                           onClick={() => openTaskDetail(t)}
-                          className="text-xs text-white truncate block hover:text-violet-300 cursor-pointer"
+                          className="text-xs text-white truncate block hover:text-[#98E499] cursor-pointer"
                         >
                           {t.title}
                         </strong>
@@ -742,18 +654,12 @@ export default function OverviewPage() {
                     </div>
 
                     <div className="flex items-center gap-2">
-                      <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold bg-[#35383a] text-violet-300">
+                      <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold bg-[#35383a] text-[#98E499]">
                         {t.status}
                       </span>
                       <span className={`priority priority-${t.priority.toLowerCase()}`}>
                         {t.priority}
                       </span>
-                      <button
-                        onClick={() => handleDeleteTask(t.id)}
-                        className="p-1 text-gray-400 hover:text-red-400 transition cursor-pointer"
-                      >
-                        <Icon name="trash" size={14} />
-                      </button>
                     </div>
                   </div>
                 ))
@@ -761,13 +667,12 @@ export default function OverviewPage() {
             </div>
           </div>
 
-          {/* F. Upcoming Schedule */}
           <div className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6 space-y-4 shadow-lg">
             <div className="flex items-center justify-between pb-3 border-b border-[var(--line)]">
               <h3 className="text-sm font-semibold text-white">Upcoming Deadlines</h3>
               <button
                 onClick={() => router.push("/calendar")}
-                className="text-xs text-violet-400 hover:underline cursor-pointer"
+                className="text-xs text-[#98E499] hover:underline cursor-pointer font-medium"
               >
                 Calendar
               </button>
@@ -778,9 +683,9 @@ export default function OverviewPage() {
                 <div
                   key={t.id}
                   onClick={() => openTaskDetail(t)}
-                  className="p-3 rounded-xl bg-[#1e2022] border border-[var(--line)] flex items-start gap-3 hover:border-violet-500/50 transition cursor-pointer"
+                  className="p-3 rounded-xl bg-[#1e2022] border border-[var(--line)] flex items-start gap-3 hover:border-[#98E499]/50 transition cursor-pointer"
                 >
-                  <div className="p-2 rounded-lg bg-[#35383a] text-violet-400">
+                  <div className="p-2 rounded-lg bg-[#35383a] text-[#98E499]">
                     <Icon name="calendar" size={15} />
                   </div>
                   <div className="min-w-0 flex-1">
@@ -795,9 +700,8 @@ export default function OverviewPage() {
           </div>
         </div>
 
-        {/* G. Recent Activity & H. Quick Actions */}
+        {/* Recent Activity & Quick Actions */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* G. Recent Activity - Target Smooth Scroll ID: recent-activity */}
           <div id="recent-activity" className="lg:col-span-2 rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6 space-y-4 shadow-lg scroll-mt-6">
             <div className="pb-3 border-b border-[var(--line)]">
               <h3 className="text-sm font-semibold text-white">Recent Activity</h3>
@@ -814,13 +718,13 @@ export default function OverviewPage() {
                     className="flex items-center justify-between p-2.5 rounded-xl bg-[#1e2022] border border-[var(--line)] text-xs"
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
-                      <span className="p-1.5 rounded-lg bg-[#35383a] text-violet-400">
+                      <span className="p-1.5 rounded-lg bg-[#35383a] text-[#98E499]">
                         <Icon name={act.type === "task_completed" ? "check" : "spark"} size={13} />
                       </span>
                       <div className="truncate">
                         <span className="text-white font-medium">{act.title}</span>
                         <span className="text-gray-400 text-[10px] block">
-                          {act.type === "task_completed" ? "Marked as completed" : "Task created"} in #{act.project}
+                          {act.type === "task_completed" ? "Marked as completed" : "Activity logged"} in #{act.project}
                         </span>
                       </div>
                     </div>
@@ -831,7 +735,6 @@ export default function OverviewPage() {
             )}
           </div>
 
-          {/* H. Quick Actions */}
           <div className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6 space-y-4 shadow-lg">
             <div className="pb-3 border-b border-[var(--line)]">
               <h3 className="text-sm font-semibold text-white">Quick Actions</h3>
@@ -844,7 +747,7 @@ export default function OverviewPage() {
                   setNewTaskTitle("");
                   setShowNewTaskModal(true);
                 }}
-                className="p-3 rounded-xl border border-[var(--line)] bg-[#1e2022] hover:bg-violet-600/20 hover:border-violet-500/50 text-white font-medium flex flex-col items-center justify-center gap-2 transition cursor-pointer text-center"
+                className="p-3 rounded-xl border border-[var(--line)] bg-[#1e2022] hover:bg-[#98E499]/10 hover:border-[#98E499]/40 text-white font-medium flex flex-col items-center justify-center gap-2 transition cursor-pointer text-center"
               >
                 <Icon name="plus" size={18} />
                 Create Task
@@ -855,7 +758,7 @@ export default function OverviewPage() {
                   setNewProjectName("");
                   setShowNewProjectModal(true);
                 }}
-                className="p-3 rounded-xl border border-[var(--line)] bg-[#1e2022] hover:bg-violet-600/20 hover:border-violet-500/50 text-white font-medium flex flex-col items-center justify-center gap-2 transition cursor-pointer text-center"
+                className="p-3 rounded-xl border border-[var(--line)] bg-[#1e2022] hover:bg-[#98E499]/10 hover:border-[#98E499]/40 text-white font-medium flex flex-col items-center justify-center gap-2 transition cursor-pointer text-center"
               >
                 <Icon name="folder" size={18} />
                 Create Project
@@ -863,7 +766,7 @@ export default function OverviewPage() {
 
               <button
                 onClick={() => router.push("/calendar")}
-                className="p-3 rounded-xl border border-[var(--line)] bg-[#1e2022] hover:bg-violet-600/20 hover:border-violet-500/50 text-white font-medium flex flex-col items-center justify-center gap-2 transition cursor-pointer text-center"
+                className="p-3 rounded-xl border border-[var(--line)] bg-[#1e2022] hover:bg-[#98E499]/10 hover:border-[#98E499]/40 text-white font-medium flex flex-col items-center justify-center gap-2 transition cursor-pointer text-center"
               >
                 <Icon name="calendar" size={18} />
                 Open Calendar
@@ -871,10 +774,10 @@ export default function OverviewPage() {
 
               <button
                 onClick={() => router.push("/projects")}
-                className="p-3 rounded-xl border border-[var(--line)] bg-[#1e2022] hover:bg-violet-600/20 hover:border-violet-500/50 text-white font-medium flex flex-col items-center justify-center gap-2 transition cursor-pointer text-center"
+                className="p-3 rounded-xl border border-[var(--line)] bg-[#1e2022] hover:bg-[#98E499]/10 hover:border-[#98E499]/40 text-white font-medium flex flex-col items-center justify-center gap-2 transition cursor-pointer text-center"
               >
                 <Icon name="arrowRight" size={18} />
-                View All Tasks
+                View Projects
               </button>
             </div>
           </div>
@@ -903,7 +806,7 @@ export default function OverviewPage() {
                 <input
                   value={editTitle}
                   onChange={(e) => setEditTitle(e.target.value)}
-                  className="w-full rounded-xl border border-[var(--line)] bg-[#1e2022] px-3.5 py-2 text-white"
+                  className="w-full rounded-xl border border-[var(--line)] bg-[#1e2022] px-3.5 py-2 text-white focus:outline-none focus:border-[#98E499]"
                 />
               </div>
               <div>
@@ -912,7 +815,7 @@ export default function OverviewPage() {
                   rows={3}
                   value={editDesc}
                   onChange={(e) => setEditDesc(e.target.value)}
-                  className="w-full rounded-xl border border-[var(--line)] bg-[#1e2022] px-3.5 py-2 text-white"
+                  className="w-full rounded-xl border border-[var(--line)] bg-[#1e2022] px-3.5 py-2 text-white focus:outline-none focus:border-[#98E499]"
                 />
               </div>
               <div>
@@ -922,7 +825,7 @@ export default function OverviewPage() {
                   onChange={(e) =>
                     setEditPriority(e.target.value as "Low" | "Medium" | "High")
                   }
-                  className="w-full rounded-xl border border-[var(--line)] bg-[#1e2022] px-3 py-2 text-white"
+                  className="w-full rounded-xl border border-[var(--line)] bg-[#1e2022] px-3 py-2 text-white focus:outline-none focus:border-[#98E499]"
                 >
                   <option value="Low">Low</option>
                   <option value="Medium">Medium</option>
@@ -931,30 +834,22 @@ export default function OverviewPage() {
               </div>
             </div>
 
-            <div className="flex justify-between items-center pt-3 border-t border-[var(--line)]">
+            <div className="flex justify-end gap-2 pt-3 border-t border-[var(--line)]">
               <button
                 type="button"
-                onClick={() => handleDeleteTask(activeTask.id)}
-                className="text-xs text-red-400 hover:underline cursor-pointer"
+                onClick={() => setActiveTask(null)}
+                className="px-4 py-2 text-xs text-gray-300 hover:bg-[#35383a] rounded-xl cursor-pointer"
               >
-                Delete Task
+                Close
               </button>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setActiveTask(null)}
-                  className="px-4 py-2 text-xs text-gray-300 hover:bg-[#35383a] rounded-xl cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSaveTaskDetail}
-                  className="px-4 py-2 bg-violet-600 hover:bg-violet-500 text-white rounded-xl text-xs font-semibold cursor-pointer"
-                >
-                  Save Changes
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={handleSaveTaskDetail}
+                style={{ backgroundColor: "#98E499", color: "#26282a" }}
+                className="px-4 py-2 rounded-xl text-xs font-bold hover:bg-[#85d886] cursor-pointer"
+              >
+                Save Changes
+              </button>
             </div>
           </div>
         </div>
@@ -987,7 +882,7 @@ export default function OverviewPage() {
                   placeholder="e.g. Design Hero Wireframe"
                   value={newTaskTitle}
                   onChange={(e) => setNewTaskTitle(e.target.value)}
-                  className="w-full rounded-xl border border-[var(--line)] bg-[#1e2022] px-3.5 py-2.5 text-white focus:outline-none focus:border-violet-500"
+                  className="w-full rounded-xl border border-[var(--line)] bg-[#1e2022] px-3.5 py-2.5 text-white focus:outline-none focus:border-[#98E499]"
                 />
               </div>
 
@@ -996,8 +891,9 @@ export default function OverviewPage() {
                 <select
                   value={newTaskProjectId}
                   onChange={(e) => setNewTaskProjectId(e.target.value)}
-                  className="w-full rounded-xl border border-[var(--line)] bg-[#1e2022] px-3 py-2 text-white focus:outline-none focus:border-violet-500"
+                  className="w-full rounded-xl border border-[var(--line)] bg-[#1e2022] px-3 py-2 text-white focus:outline-none focus:border-[#98E499]"
                 >
+                  <option value="">Orbit Workspace</option>
                   {projects.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
@@ -1013,7 +909,7 @@ export default function OverviewPage() {
                   onChange={(e) =>
                     setNewTaskPriority(e.target.value as "Low" | "Medium" | "High")
                   }
-                  className="w-full rounded-xl border border-[var(--line)] bg-[#1e2022] px-3 py-2 text-white focus:outline-none focus:border-violet-500"
+                  className="w-full rounded-xl border border-[var(--line)] bg-[#1e2022] px-3 py-2 text-white focus:outline-none focus:border-[#98E499]"
                 >
                   <option value="Low">Low</option>
                   <option value="Medium">Medium</option>
@@ -1032,7 +928,8 @@ export default function OverviewPage() {
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 rounded-xl bg-violet-600 text-xs text-white font-medium hover:bg-violet-500"
+                style={{ backgroundColor: "#98E499", color: "#26282a" }}
+                className="px-4 py-2 rounded-xl text-xs font-bold hover:bg-[#85d886]"
               >
                 Create Task
               </button>
@@ -1067,7 +964,7 @@ export default function OverviewPage() {
                 placeholder="e.g. Mobile App Redesign"
                 value={newProjectName}
                 onChange={(e) => setNewProjectName(e.target.value)}
-                className="w-full rounded-xl border border-[var(--line)] bg-[#1e2022] px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-violet-500"
+                className="w-full rounded-xl border border-[var(--line)] bg-[#1e2022] px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-[#98E499]"
               />
             </div>
 
@@ -1081,7 +978,8 @@ export default function OverviewPage() {
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 rounded-xl bg-violet-600 text-xs text-white font-medium hover:bg-violet-500"
+                style={{ backgroundColor: "#98E499", color: "#26282a" }}
+                className="px-4 py-2 rounded-xl text-xs font-bold hover:bg-[#85d886]"
               >
                 Create Project
               </button>

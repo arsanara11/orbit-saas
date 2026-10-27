@@ -3,6 +3,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import WorkspaceShell from "@/components/WorkspaceShell";
+import { useWorkspace } from "@/context/WorkspaceContext";
 
 type ActivityCategory = "All activity" | "Tasks" | "Projects" | "Members";
 type DateRangeOption = "All time" | "Today" | "Last 7 days" | "Last 30 days";
@@ -209,6 +210,7 @@ function Icon({ name, size = 14 }: { name: string; size?: number }) {
 
 export default function ActivityPage() {
   const router = useRouter();
+  const { activities: globalActivities } = useWorkspace();
 
   const [selectedCategory, setSelectedCategory] = useState<ActivityCategory>("All activity");
   const [selectedDateRange, setSelectedDateRange] = useState<DateRangeOption>("All time");
@@ -228,8 +230,37 @@ export default function ActivityPage() {
     return () => clearTimeout(timer);
   }, []);
 
+  // Adaptasi data dari WorkspaceContext agar seragam dengan ActivityItem
+  const combinedActivities = useMemo(() => {
+    const contextItems: ActivityItem[] = globalActivities.map((act) => ({
+      id: act.id,
+      actor: {
+        name: act.actorName,
+        avatarInitials: act.actorAvatar,
+        role: "Member",
+      },
+      action: act.action,
+      targetItem: act.targetItem,
+      targetType: act.targetItem.toLowerCase().includes("project")
+        ? "project"
+        : act.targetItem.toLowerCase().includes("profile")
+        ? "member"
+        : "task",
+      project: act.project || "Orbit Workspace",
+      timestamp: act.timestamp,
+      exactTime: `Today at ${act.timestamp}`,
+      dateGroup: act.dateGroup || "TODAY",
+      rawDate: new Date(),
+      iconType: (act.iconType as any) || "edit",
+    }));
+
+    const contextIds = new Set(contextItems.map((a) => a.id));
+    const remainingInitial = INITIAL_ACTIVITIES.filter((a) => !contextIds.has(a.id));
+    return [...contextItems, ...remainingInitial];
+  }, [globalActivities]);
+
   const filteredActivities = useMemo(() => {
-    return INITIAL_ACTIVITIES.filter((act) => {
+    return combinedActivities.filter((act) => {
       if (selectedCategory === "Tasks" && act.targetType !== "task") return false;
       if (selectedCategory === "Projects" && act.targetType !== "project") return false;
       if (selectedCategory === "Members" && act.targetType !== "member") return false;
@@ -252,7 +283,7 @@ export default function ActivityPage() {
 
       return true;
     });
-  }, [selectedCategory, selectedDateRange, selectedActor, selectedProject, searchQuery]);
+  }, [combinedActivities, selectedCategory, selectedDateRange, selectedActor, selectedProject, searchQuery]);
 
   const displayedActivities = useMemo(() => {
     return filteredActivities.slice(0, visibleCount);
@@ -311,7 +342,7 @@ export default function ActivityPage() {
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-[30px] font-bold tracking-tight text-white">Activity</h1>
-              <span className="text-[11px] bg-[#1e2022] text-violet-400 border border-[var(--line)] px-2.5 py-0.5 rounded-full font-semibold">
+              <span className="text-[11px] bg-[#1e2022] text-[#98E499] border border-[var(--line)] px-2.5 py-0.5 rounded-full font-semibold">
                 {filteredActivities.length} events
               </span>
             </div>
@@ -323,8 +354,9 @@ export default function ActivityPage() {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
-              className={`px-3 py-1.5 rounded-xl border border-[var(--line)] text-xs font-medium flex items-center gap-1.5 transition cursor-pointer ${
-                showAdvancedFilters ? "bg-violet-600 text-white" : "bg-[#1e2022] hover:bg-[#2a2d30] text-gray-300"
+              style={showAdvancedFilters ? { backgroundColor: "#98E499", color: "#26282a" } : {}}
+              className={`px-3 py-1.5 rounded-xl border border-[var(--line)] text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+                showAdvancedFilters ? "shadow-sm" : "bg-[#1e2022] hover:bg-[#2a2d30] text-gray-300"
               }`}
             >
               <Icon name="filter" size={13} />
@@ -345,19 +377,21 @@ export default function ActivityPage() {
         <div className="space-y-2">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-1 bg-[#1e2022] p-1 rounded-xl border border-[var(--line)] text-xs overflow-x-auto">
-              {(["All activity", "Tasks", "Projects", "Members"] as const).map((cat) => (
-                <button
-                  key={cat}
-                  onClick={() => setSelectedCategory(cat)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer whitespace-nowrap ${
-                    selectedCategory === cat
-                      ? "bg-violet-600 text-white font-semibold"
-                      : "text-gray-400 hover:text-white"
-                  }`}
-                >
-                  {cat}
-                </button>
-              ))}
+              {(["All activity", "Tasks", "Projects", "Members"] as const).map((cat) => {
+                const isActive = selectedCategory === cat;
+                return (
+                  <button
+                    key={cat}
+                    onClick={() => setSelectedCategory(cat)}
+                    style={isActive ? { backgroundColor: "#98E499", color: "#26282a" } : {}}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer whitespace-nowrap ${
+                      isActive ? "shadow-sm" : "text-gray-400 hover:text-white"
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                );
+              })}
             </div>
 
             <div className="relative w-full sm:w-64">
@@ -369,7 +403,7 @@ export default function ActivityPage() {
                 placeholder="Search activity..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full rounded-xl border border-[var(--line)] bg-[#1e2022] pl-8 pr-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-violet-500 transition"
+                className="w-full rounded-xl border border-[var(--line)] bg-[#1e2022] pl-8 pr-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#98E499] transition"
               />
             </div>
           </div>
@@ -381,7 +415,7 @@ export default function ActivityPage() {
                 <select
                   value={selectedDateRange}
                   onChange={(e) => setSelectedDateRange(e.target.value as DateRangeOption)}
-                  className="w-full rounded-xl border border-[var(--line)] bg-[var(--card)] px-3 py-1.5 text-xs text-white focus:outline-none focus:border-violet-500"
+                  className="w-full rounded-xl border border-[var(--line)] bg-[var(--card)] px-3 py-1.5 text-xs text-white focus:outline-none focus:border-[#98E499]"
                 >
                   <option value="All time">All time</option>
                   <option value="Today">Today</option>
@@ -395,10 +429,11 @@ export default function ActivityPage() {
                 <select
                   value={selectedActor}
                   onChange={(e) => setSelectedActor(e.target.value)}
-                  className="w-full rounded-xl border border-[var(--line)] bg-[var(--card)] px-3 py-1.5 text-xs text-white focus:outline-none focus:border-violet-500"
+                  className="w-full rounded-xl border border-[var(--line)] bg-[var(--card)] px-3 py-1.5 text-xs text-white focus:outline-none focus:border-[#98E499]"
                 >
                   <option value="All actors">All actors</option>
                   <option value="Anisa Nabila">Anisa Nabila</option>
+                  <option value="Nabila Sabrina">Nabila Sabrina</option>
                   <option value="Ahmad Rizky">Ahmad Rizky</option>
                   <option value="M. Kenzie">M. Kenzie</option>
                   <option value="Jasmine L.">Jasmine L.</option>
@@ -410,7 +445,7 @@ export default function ActivityPage() {
                 <select
                   value={selectedProject}
                   onChange={(e) => setSelectedProject(e.target.value)}
-                  className="w-full rounded-xl border border-[var(--line)] bg-[var(--card)] px-3 py-1.5 text-xs text-white focus:outline-none focus:border-violet-500"
+                  className="w-full rounded-xl border border-[var(--line)] bg-[var(--card)] px-3 py-1.5 text-xs text-white focus:outline-none focus:border-[#98E499]"
                 >
                   <option value="All projects">All projects</option>
                   <option value="Orbit Workspace">Orbit Workspace</option>
@@ -459,9 +494,9 @@ export default function ActivityPage() {
                     <div
                       key={act.id}
                       onClick={() => setActiveDetailItem(act)}
-                      className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl border border-[var(--line)] bg-[var(--card)] hover:border-violet-500/40 transition group cursor-pointer"
+                      className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl border border-[var(--line)] bg-[var(--card)] hover:border-[#98E499]/40 transition group cursor-pointer"
                     >
-                      <span className="absolute -left-6 top-3.5 w-4 h-4 rounded-full bg-[#1e2022] border border-[var(--line)] flex items-center justify-center text-violet-400 group-hover:border-violet-500 transition">
+                      <span className="absolute -left-6 top-3.5 w-4 h-4 rounded-full bg-[#1e2022] border border-[var(--line)] flex items-center justify-center text-[#98E499] group-hover:border-[#98E499] transition">
                         <Icon name={act.iconType} size={10} />
                       </span>
 
@@ -471,7 +506,7 @@ export default function ActivityPage() {
                             {act.actor.name}
                           </strong>
                           <span className="text-gray-400">{act.action}</span>
-                          <span className="text-violet-300 font-medium hover:underline">
+                          <span className="text-[#98E499] font-medium hover:underline">
                             "{act.targetItem}"
                           </span>
 
@@ -490,7 +525,7 @@ export default function ActivityPage() {
                                 className="text-[10px] bg-[#1e2022] border border-[var(--line)] px-2 py-0.5 rounded-md text-gray-300"
                               >
                                 <b>{c.field}:</b> <span className="text-gray-400 line-through">{c.oldValue}</span> →{" "}
-                                <span className="text-violet-300 font-medium">{c.newValue}</span>
+                                <span className="text-[#98E499] font-medium">{c.newValue}</span>
                               </span>
                             ))}
                           </div>
@@ -556,7 +591,7 @@ export default function ActivityPage() {
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-400">Action</span>
-                    <span className="text-violet-300 font-medium">{activeDetailItem.action}</span>
+                    <span className="text-[#98E499] font-medium">{activeDetailItem.action}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-400">Target</span>
@@ -584,7 +619,7 @@ export default function ActivityPage() {
                         <div className="flex items-center gap-1.5">
                           <span className="line-through text-gray-500">{c.oldValue}</span>
                           <span className="text-gray-400">→</span>
-                          <span className="text-emerald-400 font-medium">{c.newValue}</span>
+                          <span className="text-[#98E499] font-medium">{c.newValue}</span>
                         </div>
                       </div>
                     ))}
@@ -608,7 +643,8 @@ export default function ActivityPage() {
                       router.push("/overview");
                     }
                   }}
-                  className="px-3.5 py-1.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-xs font-semibold text-white transition cursor-pointer"
+                  style={{ backgroundColor: "#98E499", color: "#26282a" }}
+                  className="px-3.5 py-1.5 rounded-xl font-bold text-xs hover:bg-[#85d886] transition cursor-pointer"
                 >
                   Open Item
                 </button>

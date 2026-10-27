@@ -3,6 +3,7 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import WorkspaceShell from "@/components/WorkspaceShell";
+import { useWorkspace } from "@/context/WorkspaceContext";
 
 // --- TYPES ---
 type MessageTab = "Inbox" | "Unread" | "Archived";
@@ -73,7 +74,7 @@ const INITIAL_CONVERSATIONS: Conversation[] = [
     linkedProject: { id: "proj-1", name: "Orbit Workspace" },
     linkedTask: { id: "task-101", title: "Finalize dashboard layout" },
     members: [
-      { name: "Anisa Nabila", role: "Project Lead (You)", avatar: "AN", isOnline: true },
+      { name: "You", role: "Project Lead", avatar: "ME", isOnline: true },
       { name: "Arkan", role: "Frontend Developer", avatar: "AR", isOnline: true },
     ],
   },
@@ -89,7 +90,7 @@ const INITIAL_CONVERSATIONS: Conversation[] = [
     unreadCount: 0,
     linkedProject: { id: "proj-2", name: "Website Redesign" },
     members: [
-      { name: "Anisa Nabila", role: "Project Lead (You)", avatar: "AN", isOnline: true },
+      { name: "You", role: "Project Lead", avatar: "ME", isOnline: true },
       { name: "Dina S.", role: "UI/UX Specialist", avatar: "DS", isOnline: false },
     ],
   },
@@ -105,7 +106,7 @@ const INITIAL_CONVERSATIONS: Conversation[] = [
     unreadCount: 0,
     linkedProject: { id: "proj-1", name: "Orbit Workspace" },
     members: [
-      { name: "Anisa Nabila", role: "Project Lead", avatar: "AN", isOnline: true },
+      { name: "You", role: "Project Lead", avatar: "ME", isOnline: true },
       { name: "Ahmad Rizky", role: "Frontend Dev", avatar: "AR", isOnline: true },
       { name: "M. Kenzie", role: "UI/UX Designer", avatar: "MK", isOnline: true },
       { name: "Jasmine L.", role: "Backend Dev", avatar: "JL", isOnline: false },
@@ -132,8 +133,8 @@ const INITIAL_MESSAGES: Record<string, Message[]> = {
       id: "msg-2",
       conversationId: "conv-1",
       senderId: "u-me",
-      senderName: "Anisa Nabila",
-      senderAvatar: "AN",
+      senderName: "You",
+      senderAvatar: "ME",
       content: "Udah hampir selesai, tinggal responsive.",
       timestamp: "10:50 AM",
       exactTime: "Today at 10:50 AM",
@@ -162,7 +163,7 @@ const INITIAL_MESSAGES: Record<string, Message[]> = {
       senderId: "u-dina",
       senderName: "Dina",
       senderAvatar: "DS",
-      content: "Halo Anisa, file aset icon kemarin udah di-upload ke Figma ya.",
+      content: "Halo, file aset icon kemarin udah di-upload ke Figma ya.",
       timestamp: "4:15 PM",
       exactTime: "Yesterday at 4:15 PM",
       dateGroup: "YESTERDAY",
@@ -300,9 +301,6 @@ function Icon({ name, size = 14 }: { name: string; size?: number }) {
       </>
     ),
     chevronRight: <path d="m9 18 6-6-6-6" />,
-    newChat: (
-      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10zM12 8v6M9 11h6" />
-    ),
   };
 
   return <svg {...common}>{paths[name] || paths.folder}</svg>;
@@ -310,6 +308,7 @@ function Icon({ name, size = 14 }: { name: string; size?: number }) {
 
 export default function MessagesPage() {
   const router = useRouter();
+  const { profile, logActivity } = useWorkspace();
 
   // --- STATES ---
   const [conversations, setConversations] = useState<Conversation[]>(INITIAL_CONVERSATIONS);
@@ -328,37 +327,30 @@ export default function MessagesPage() {
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  // Percakapan aktif saat ini
   const activeConv = useMemo(() => {
     return conversations.find((c) => c.id === activeConvId) || conversations[0];
   }, [conversations, activeConvId]);
 
-  // Pesan untuk percakapan aktif
   const currentMessages = useMemo(() => {
     return allMessages[activeConvId] || [];
   }, [allMessages, activeConvId]);
 
-  // Auto Scroll ke pesan terbaru
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [currentMessages]);
 
-  // Reset unread count ketika percakapan dibuka
   useEffect(() => {
     setConversations((prev) =>
       prev.map((c) => (c.id === activeConvId ? { ...c, unreadCount: 0 } : c))
     );
   }, [activeConvId]);
 
-  // Filter daftar percakapan
   const filteredConversations = useMemo(() => {
     return conversations.filter((c) => {
-      // 1. Tab Filter
       if (activeTab === "Unread" && c.unreadCount === 0) return false;
       if (activeTab === "Archived" && !c.isArchived) return false;
       if (activeTab !== "Archived" && c.isArchived) return false;
 
-      // 2. Search Query
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const matchName = c.name.toLowerCase().includes(q);
@@ -371,7 +363,6 @@ export default function MessagesPage() {
     });
   }, [conversations, activeTab, searchQuery]);
 
-  // Handle Kirim Pesan
   function handleSendMessage() {
     if (!messageInput.trim() && attachedFiles.length === 0) return;
 
@@ -379,8 +370,8 @@ export default function MessagesPage() {
       id: `msg-${Date.now()}`,
       conversationId: activeConvId,
       senderId: "u-me",
-      senderName: "Anisa Nabila",
-      senderAvatar: "AN",
+      senderName: profile.name,
+      senderAvatar: profile.initials,
       content: messageInput.trim(),
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       exactTime: `Today at ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
@@ -397,13 +388,11 @@ export default function MessagesPage() {
         : undefined,
     };
 
-    // Tambahkan ke pesan
     setAllMessages((prev) => ({
       ...prev,
       [activeConvId]: [...(prev[activeConvId] || []), newMsg],
     }));
 
-    // Update last message di percakapan
     setConversations((prev) =>
       prev.map((c) =>
         c.id === activeConvId
@@ -416,13 +405,13 @@ export default function MessagesPage() {
       )
     );
 
-    // Reset Form Composer
+    logActivity("sent a message", activeConv.name, activeConv.linkedProject?.name || "Orbit Workspace");
+
     setMessageInput("");
     setReplyingTo(null);
     setAttachedFiles([]);
   }
 
-  // Handle Enter & Shift+Enter pada Composer
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -430,7 +419,6 @@ export default function MessagesPage() {
     }
   }
 
-  // Handle Simulasi Upload File
   function handleAddAttachment() {
     const mockFiles: Attachment[] = [
       { id: `file-${Date.now()}`, name: "orbit_spec_v2.pdf", size: "1.4 MB", type: "file" },
@@ -440,7 +428,6 @@ export default function MessagesPage() {
     setAttachedFiles((prev) => [...prev, fileToAdd]);
   }
 
-  // Handle Hapus Pesan
   function handleDeleteMessage(msgId: string) {
     setAllMessages((prev) => ({
       ...prev,
@@ -448,14 +435,12 @@ export default function MessagesPage() {
     }));
   }
 
-  // Handle Archive Percakapan
   function handleArchiveConversation(convId: string) {
     setConversations((prev) =>
       prev.map((c) => (c.id === convId ? { ...c, isArchived: !c.isArchived } : c))
     );
   }
 
-  // Handle Buat Percakapan Baru
   function handleCreateNewChat(e: React.FormEvent) {
     e.preventDefault();
     if (!newChatRecipient.trim()) return;
@@ -472,7 +457,7 @@ export default function MessagesPage() {
       unreadCount: 0,
       linkedProject: { id: "proj-1", name: "Orbit Workspace" },
       members: [
-        { name: "Anisa Nabila", role: "Project Lead (You)", avatar: "AN", isOnline: true },
+        { name: profile.name, role: "Project Lead (You)", avatar: profile.initials, isOnline: true },
         { name: newChatRecipient.trim(), role: "Team Member", avatar: newChatRecipient.trim().slice(0, 2).toUpperCase(), isOnline: true },
       ],
     };
@@ -490,30 +475,26 @@ export default function MessagesPage() {
   return (
     <WorkspaceShell>
       <div className="flex h-[calc(100vh-80px)] overflow-hidden bg-[#18191b] text-white">
-        
-        {/* ========================================================= */}
-        {/* AREA 1: SIDEBAR PERCAKAPAN (LEFT SIDEBAR)                 */}
-        {/* ========================================================= */}
+        {/* SIDEBAR PERCAKAPAN */}
         <aside className="w-80 shrink-0 border-r border-[var(--line)] bg-[#1e2022] flex flex-col">
-          {/* Header Sidebar */}
           <div className="p-4 border-b border-[var(--line)] space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <h1 className="text-base font-bold tracking-tight text-white">Messages</h1>
-                <span className="text-[10px] bg-lime-500/10 text-lime-400 border border-lime-500/20 px-2 py-0.5 rounded-full font-semibold">
+                <span className="text-[10px] bg-[#98E499]/10 text-[#98E499] border border-[#98E499]/20 px-2 py-0.5 rounded-full font-semibold">
                   Connected
                 </span>
               </div>
               <button
                 onClick={() => setShowNewChatModal(true)}
-                className="p-1.5 rounded-xl bg-lime-500 hover:bg-lime-400 text-black font-semibold transition cursor-pointer"
+                style={{ backgroundColor: "#98E499", color: "#26282a" }}
+                className="p-1.5 rounded-xl font-bold hover:bg-[#85d886] transition cursor-pointer"
                 title="Start New Conversation"
               >
                 <Icon name="plus" size={15} />
               </button>
             </div>
 
-            {/* Input Pencarian Conversations */}
             <div className="relative">
               <span className="absolute left-3 top-2.5 text-gray-400">
                 <Icon name="search" size={13} />
@@ -523,11 +504,10 @@ export default function MessagesPage() {
                 placeholder="Search conversations..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full rounded-xl border border-[var(--line)] bg-[#242628] pl-8 pr-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-lime-500 transition"
+                className="w-full rounded-xl border border-[var(--line)] bg-[#242628] pl-8 pr-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#98E499] transition"
               />
             </div>
 
-            {/* Tab Filter: Inbox, Unread, Archived */}
             <div className="flex items-center gap-1 bg-[#141517] p-1 rounded-xl border border-[var(--line)] text-xs">
               {(["Inbox", "Unread", "Archived"] as const).map((tab) => (
                 <button
@@ -545,7 +525,6 @@ export default function MessagesPage() {
             </div>
           </div>
 
-          {/* Daftar Percakapan (Conversation List) */}
           <div className="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar">
             {filteredConversations.length === 0 ? (
               <div className="py-12 text-center text-xs text-gray-500 space-y-2">
@@ -563,21 +542,19 @@ export default function MessagesPage() {
                     onClick={() => setActiveConvId(conv.id)}
                     className={`relative flex items-center gap-3 p-3 rounded-xl cursor-pointer transition group ${
                       isActive
-                        ? "bg-[#282a2d] border border-violet-500/30"
+                        ? "bg-[#282a2d] border border-[#98E499]/40"
                         : "hover:bg-[#242628] border border-transparent"
                     }`}
                   >
-                    {/* Avatar & Indicator Online */}
                     <div className="relative shrink-0">
-                      <div className="w-9 h-9 rounded-full bg-violet-600/30 border border-violet-500/40 flex items-center justify-center font-bold text-xs text-violet-300">
+                      <div className="w-9 h-9 rounded-full bg-[#98E499]/20 border border-[#98E499]/30 flex items-center justify-center font-bold text-xs text-[#98E499]">
                         {conv.avatar}
                       </div>
                       {conv.isOnline && (
-                        <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-lime-500 border-2 border-[#1e2022]" />
+                        <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-[#98E499] border-2 border-[#1e2022]" />
                       )}
                     </div>
 
-                    {/* Informasi Teks & Preview */}
                     <div className="flex-1 min-w-0 space-y-0.5">
                       <div className="flex items-center justify-between">
                         <strong className="text-xs font-semibold text-white truncate">
@@ -593,15 +570,17 @@ export default function MessagesPage() {
                       </p>
 
                       {conv.linkedProject && (
-                        <span className="inline-block text-[9px] text-violet-300 bg-violet-500/10 border border-violet-500/20 px-1.5 py-0.2 rounded font-medium">
+                        <span className="inline-block text-[9px] text-[#98E499] bg-[#98E499]/10 border border-[#98E499]/20 px-1.5 py-0.2 rounded font-medium">
                           #{conv.linkedProject.name}
                         </span>
                       )}
                     </div>
 
-                    {/* Badge Unread Count */}
                     {conv.unreadCount > 0 && (
-                      <span className="w-4 h-4 rounded-full bg-lime-500 text-black font-bold text-[10px] flex items-center justify-center shrink-0">
+                      <span
+                        style={{ backgroundColor: "#98E499", color: "#26282a" }}
+                        className="w-4 h-4 rounded-full font-bold text-[10px] flex items-center justify-center shrink-0"
+                      >
                         {conv.unreadCount}
                       </span>
                     )}
@@ -612,20 +591,16 @@ export default function MessagesPage() {
           </div>
         </aside>
 
-        {/* ========================================================= */}
-        {/* AREA 2: CHAT CONVERSATION (MAIN AREA)                      */}
-        {/* ========================================================= */}
+        {/* CHAT CONVERSATION */}
         <main className="flex-1 flex flex-col bg-[#18191b] min-w-0 relative">
-          
-          {/* Header Percakapan Aktif */}
           <header className="h-14 px-5 border-b border-[var(--line)] bg-[#1e2022] flex items-center justify-between shrink-0">
             <div className="flex items-center gap-3 min-w-0">
               <div className="relative">
-                <div className="w-8 h-8 rounded-full bg-violet-600/30 border border-violet-500/40 flex items-center justify-center font-bold text-xs text-violet-300">
+                <div className="w-8 h-8 rounded-full bg-[#98E499]/20 border border-[#98E499]/30 flex items-center justify-center font-bold text-xs text-[#98E499]">
                   {activeConv.avatar}
                 </div>
                 {activeConv.isOnline && (
-                  <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-lime-500 border-2 border-[#1e2022]" />
+                  <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-[#98E499] border-2 border-[#1e2022]" />
                 )}
               </div>
 
@@ -640,7 +615,7 @@ export default function MessagesPage() {
                 </div>
 
                 {activeConv.linkedProject && (
-                  <div className="flex items-center gap-1.5 text-[10px] text-violet-300">
+                  <div className="flex items-center gap-1.5 text-[10px] text-[#98E499]">
                     <Icon name="folder" size={11} />
                     <span>Project: {activeConv.linkedProject.name}</span>
                   </div>
@@ -648,7 +623,6 @@ export default function MessagesPage() {
               </div>
             </div>
 
-            {/* Tombol Aksi Header Chat */}
             <div className="flex items-center gap-2">
               <button
                 onClick={() => handleArchiveConversation(activeConv.id)}
@@ -660,9 +634,10 @@ export default function MessagesPage() {
 
               <button
                 onClick={() => setShowDetailPanel(!showDetailPanel)}
+                style={showDetailPanel ? { backgroundColor: "#98E499", color: "#26282a" } : {}}
                 className={`p-1.5 rounded-lg border transition cursor-pointer ${
                   showDetailPanel
-                    ? "bg-violet-600 border-violet-500 text-white"
+                    ? "font-bold"
                     : "bg-[#242628] border-[var(--line)] text-gray-400 hover:text-white"
                 }`}
                 title="Toggle Context Details Panel"
@@ -672,7 +647,6 @@ export default function MessagesPage() {
             </div>
           </header>
 
-          {/* Body Chat Stream */}
           <div className="flex-1 overflow-y-auto p-5 space-y-4 custom-scrollbar">
             {currentMessages.length === 0 ? (
               <div className="py-20 text-center space-y-2">
@@ -691,7 +665,6 @@ export default function MessagesPage() {
 
                 return (
                   <div key={msg.id} className="space-y-3">
-                    {/* Header Tanggal */}
                     {showDateHeader && (
                       <div className="flex items-center gap-3 my-4">
                         <div className="flex-1 h-px bg-[var(--line)]" />
@@ -702,54 +675,64 @@ export default function MessagesPage() {
                       </div>
                     )}
 
-                    {/* Chat Bubble Item */}
                     <div
                       className={`flex gap-2.5 group ${
                         msg.isMine ? "justify-end" : "justify-start"
                       }`}
                     >
-                      {/* Avatar Lawan Bicara */}
                       {!msg.isMine && (
-                        <div className="w-7 h-7 rounded-full bg-violet-600/30 border border-violet-500/40 flex items-center justify-center font-bold text-[10px] text-violet-300 shrink-0 mt-1">
+                        <div className="w-7 h-7 rounded-full bg-[#98E499]/20 border border-[#98E499]/30 flex items-center justify-center font-bold text-[10px] text-[#98E499] shrink-0 mt-1">
                           {msg.senderAvatar}
                         </div>
                       )}
 
-                      <div className={`max-w-[70%] space-y-1 ${msg.isMine ? "items-end" : "items-start"}`}>
-                        {/* Nama Pengirim pada Grup Chat */}
+                      {msg.isMine && (
+                        <div className="order-2 shrink-0 mt-1">
+                          {profile.avatarUrl ? (
+                            <img
+                              src={profile.avatarUrl}
+                              alt="Me"
+                              className="w-7 h-7 rounded-full object-cover border border-[#98E499]/40"
+                            />
+                          ) : (
+                            <div className="w-7 h-7 rounded-full bg-[#98E499] text-[#26282a] flex items-center justify-center font-bold text-[10px]">
+                              {profile.initials}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      <div className={`max-w-[70%] space-y-1 ${msg.isMine ? "items-end order-1" : "items-start"}`}>
                         {!msg.isMine && activeConv.type === "group" && (
-                          <span className="text-[10px] font-medium text-violet-300 block pl-1">
+                          <span className="text-[10px] font-medium text-[#98E499] block pl-1">
                             {msg.senderName}
                           </span>
                         )}
 
-                        {/* Quoted Reply Reference */}
                         {msg.replyTo && (
-                          <div className="p-2 rounded-lg bg-[#18191b] border-l-2 border-violet-500 text-[11px] space-y-0.5">
-                            <span className="font-semibold text-violet-300 block text-[10px]">
+                          <div className="p-2 rounded-lg bg-[#18191b] border-l-2 border-[#98E499] text-[11px] space-y-0.5">
+                            <span className="font-semibold text-[#98E499] block text-[10px]">
                               {msg.replyTo.senderName}
                             </span>
                             <p className="text-gray-400 truncate">{msg.replyTo.content}</p>
                           </div>
                         )}
 
-                        {/* Bubble Utama */}
                         <div
                           className={`p-3 rounded-2xl text-xs leading-relaxed relative ${
                             msg.isMine
-                              ? "bg-gradient-to-r from-violet-600 to-violet-700 text-white rounded-tr-xs shadow-md"
+                              ? "bg-[#98E499] text-[#26282a] font-medium rounded-tr-xs shadow-md"
                               : "bg-[#242628] text-gray-200 border border-[var(--line)] rounded-tl-xs"
                           }`}
                         >
                           <p className="whitespace-pre-wrap break-words">{msg.content}</p>
 
-                          {/* Lampiran File jika ada */}
                           {msg.attachments && msg.attachments.length > 0 && (
-                            <div className="mt-2 space-y-1 pt-2 border-t border-white/10">
+                            <div className="mt-2 space-y-1 pt-2 border-t border-black/10">
                               {msg.attachments.map((att) => (
                                 <div
                                   key={att.id}
-                                  className="flex items-center gap-2 p-1.5 rounded-lg bg-black/20 text-[11px]"
+                                  className="flex items-center gap-2 p-1.5 rounded-lg bg-black/10 text-[11px]"
                                 >
                                   <Icon name="file" size={13} />
                                   <span className="font-medium truncate flex-1">{att.name}</span>
@@ -759,7 +742,6 @@ export default function MessagesPage() {
                             </div>
                           )}
 
-                          {/* Action Hover Trigger */}
                           <div
                             className={`absolute top-2 ${
                               msg.isMine ? "-left-14" : "-right-14"
@@ -784,7 +766,6 @@ export default function MessagesPage() {
                           </div>
                         </div>
 
-                        {/* Meta Waktu & Status Baca */}
                         <div
                           className={`flex items-center gap-1.5 text-[9px] text-gray-500 ${
                             msg.isMine ? "justify-end pr-1" : "pl-1"
@@ -792,7 +773,7 @@ export default function MessagesPage() {
                         >
                           <span>{msg.timestamp}</span>
                           {msg.isMine && (
-                            <span className="text-lime-400">
+                            <span className="text-[#98E499]">
                               <Icon name="doubleCheck" size={11} />
                             </span>
                           )}
@@ -806,16 +787,12 @@ export default function MessagesPage() {
             <div ref={chatEndRef} />
           </div>
 
-          {/* ========================================================= */}
-          {/* COMPOSER / AREA MENULIS PESAN                             */}
-          {/* ========================================================= */}
+          {/* COMPOSER */}
           <footer className="p-4 border-t border-[var(--line)] bg-[#1e2022] space-y-2">
-            
-            {/* Quoted Reply Indicator Bar */}
             {replyingTo && (
               <div className="flex items-center justify-between p-2 rounded-xl bg-[#242628] border border-[var(--line)] text-xs text-gray-300">
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-violet-400 font-semibold text-[11px]">
+                  <span className="text-[#98E499] font-semibold text-[11px]">
                     Replying to {replyingTo.senderName}:
                   </span>
                   <span className="truncate text-gray-400 text-[11px]">{replyingTo.content}</span>
@@ -829,7 +806,6 @@ export default function MessagesPage() {
               </div>
             )}
 
-            {/* Preview Lampiran Sebelum Dikirim */}
             {attachedFiles.length > 0 && (
               <div className="flex flex-wrap gap-2 pt-1">
                 {attachedFiles.map((att) => (
@@ -852,9 +828,7 @@ export default function MessagesPage() {
               </div>
             )}
 
-            {/* Input Form & Buttons */}
-            <div className="relative flex items-end gap-2 bg-[#18191b] p-2 rounded-2xl border border-[var(--line)] focus-within:border-lime-500/50 transition">
-              {/* Textarea Multi-line */}
+            <div className="relative flex items-end gap-2 bg-[#18191b] p-2 rounded-2xl border border-[var(--line)] focus-within:border-[#98E499]/50 transition">
               <textarea
                 rows={2}
                 placeholder="Write a message... (Shift+Enter for new line)"
@@ -864,7 +838,6 @@ export default function MessagesPage() {
                 className="w-full bg-transparent text-xs text-white placeholder-gray-500 resize-none focus:outline-none p-1.5 custom-scrollbar"
               />
 
-              {/* Action Toolbar */}
               <div className="flex items-center gap-2 shrink-0 pb-1">
                 <button
                   onClick={handleAddAttachment}
@@ -890,13 +863,17 @@ export default function MessagesPage() {
                   <Icon name="at" size={16} />
                 </button>
 
-                {/* Send Button dengan Aksen Lime Green */}
                 <button
                   onClick={handleSendMessage}
                   disabled={!messageInput.trim() && attachedFiles.length === 0}
+                  style={
+                    messageInput.trim() || attachedFiles.length > 0
+                      ? { backgroundColor: "#98E499", color: "#26282a" }
+                      : {}
+                  }
                   className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer ${
                     messageInput.trim() || attachedFiles.length > 0
-                      ? "bg-lime-500 hover:bg-lime-400 text-black shadow-lg shadow-lime-500/20"
+                      ? "hover:bg-[#85d886] shadow-sm"
                       : "bg-[#242628] text-gray-500 cursor-not-allowed"
                   }`}
                 >
@@ -908,9 +885,7 @@ export default function MessagesPage() {
           </footer>
         </main>
 
-        {/* ========================================================= */}
-        {/* AREA 3: CONVERSATION DETAILS (PANEL KANAN - OPTIONAL)      */}
-        {/* ========================================================= */}
+        {/* CONVERSATION DETAILS PANEL */}
         {showDetailPanel && (
           <aside className="w-72 shrink-0 border-l border-[var(--line)] bg-[#1e2022] p-4 space-y-5 overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-[var(--line)]">
@@ -923,16 +898,14 @@ export default function MessagesPage() {
               </button>
             </div>
 
-            {/* Info Profil / Group */}
             <div className="text-center space-y-2 pb-4 border-b border-[var(--line)]">
-              <div className="w-14 h-14 rounded-full bg-violet-600/30 border border-violet-500/40 flex items-center justify-center font-bold text-base text-violet-300 mx-auto">
+              <div className="w-14 h-14 rounded-full bg-[#98E499]/20 border border-[#98E499]/30 flex items-center justify-center font-bold text-base text-[#98E499] mx-auto">
                 {activeConv.avatar}
               </div>
               <strong className="block text-sm font-semibold text-white">{activeConv.name}</strong>
               <span className="text-xs text-gray-400">{activeConv.roleOrStatus}</span>
             </div>
 
-            {/* Linked Workspace Context */}
             <div className="space-y-3 pb-4 border-b border-[var(--line)]">
               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
                 Workspace Context
@@ -943,7 +916,7 @@ export default function MessagesPage() {
                   <span className="text-[10px] text-gray-400 block">Linked Project</span>
                   <button
                     onClick={() => router.push(`/projects?id=${activeConv.linkedProject?.id}`)}
-                    className="text-xs font-semibold text-violet-300 hover:underline flex items-center gap-1.5 cursor-pointer"
+                    className="text-xs font-semibold text-[#98E499] hover:underline flex items-center gap-1.5 cursor-pointer"
                   >
                     <Icon name="folder" size={13} />
                     <span>#{activeConv.linkedProject.name}</span>
@@ -956,7 +929,7 @@ export default function MessagesPage() {
                   <span className="text-[10px] text-gray-400 block">Related Task</span>
                   <button
                     onClick={() => router.push("/overview")}
-                    className="text-xs font-semibold text-violet-300 hover:underline flex items-center gap-1.5 cursor-pointer"
+                    className="text-xs font-semibold text-[#98E499] hover:underline flex items-center gap-1.5 cursor-pointer"
                   >
                     <Icon name="check" size={13} />
                     <span>{activeConv.linkedTask.title}</span>
@@ -965,7 +938,6 @@ export default function MessagesPage() {
               )}
             </div>
 
-            {/* Members List */}
             {activeConv.members && (
               <div className="space-y-3">
                 <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
@@ -976,7 +948,7 @@ export default function MessagesPage() {
                   {activeConv.members.map((m) => (
                     <div key={m.name} className="flex items-center justify-between text-xs">
                       <div className="flex items-center gap-2">
-                        <div className="w-6 h-6 rounded-full bg-violet-600/30 border border-violet-500/40 flex items-center justify-center text-[10px] text-violet-300 font-semibold">
+                        <div className="w-6 h-6 rounded-full bg-[#98E499]/20 border border-[#98E499]/30 flex items-center justify-center text-[10px] text-[#98E499] font-semibold">
                           {m.avatar}
                         </div>
                         <span className="text-gray-200 font-medium">{m.name}</span>
@@ -1017,7 +989,7 @@ export default function MessagesPage() {
                 placeholder="e.g. Jasmine L. or Design Team"
                 value={newChatRecipient}
                 onChange={(e) => setNewChatRecipient(e.target.value)}
-                className="w-full rounded-xl border border-[var(--line)] bg-[#242628] px-3 py-2 text-xs text-white focus:outline-none focus:border-lime-500 transition"
+                className="w-full rounded-xl border border-[var(--line)] bg-[#242628] px-3 py-2 text-xs text-white focus:outline-none focus:border-[#98E499] transition"
               />
             </div>
 
@@ -1031,7 +1003,8 @@ export default function MessagesPage() {
               </button>
               <button
                 type="submit"
-                className="px-4 py-1.5 rounded-xl bg-lime-500 text-black font-semibold text-xs hover:bg-lime-400 transition cursor-pointer"
+                style={{ backgroundColor: "#98E499", color: "#26282a" }}
+                className="px-4 py-1.5 rounded-xl font-bold text-xs hover:bg-[#85d886] transition cursor-pointer"
               >
                 Start Chat
               </button>
