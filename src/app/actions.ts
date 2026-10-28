@@ -45,6 +45,37 @@ const defaultProjects = [
   },
 ];
 
+const workspaceInclude = {
+  projects: {
+    include: { tasks: { orderBy: { createdAt: "asc" as const } } },
+    orderBy: { createdAt: "asc" as const },
+  },
+  memberships: {
+    include: {
+      user: {
+        select: { id: true, name: true, email: true, image: true },
+      },
+    },
+  },
+  messages: {
+    include: {
+      sender: {
+        select: { id: true, name: true, email: true, image: true },
+      },
+    },
+    orderBy: { createdAt: "asc" as const },
+  },
+  activities: {
+    include: {
+      user: {
+        select: { id: true, name: true, email: true, image: true },
+      },
+    },
+    orderBy: { createdAt: "desc" as const },
+    take: 20,
+  },
+};
+
 export async function getInitialWorkspaceData() {
   const session = await auth.api.getSession({
     headers: await headers(),
@@ -54,12 +85,7 @@ export async function getInitialWorkspaceData() {
 
   let workspace = await prisma.workspace.findFirst({
     where: { memberships: { some: { userId: session.user.id } } },
-    include: {
-      projects: {
-        include: { tasks: { orderBy: { createdAt: "asc" } } },
-        orderBy: { createdAt: "asc" },
-      },
-    },
+    include: workspaceInclude,
   });
 
   if (!workspace) {
@@ -70,12 +96,7 @@ export async function getInitialWorkspaceData() {
         ownerId: session.user.id,
         memberships: { create: { userId: session.user.id, role: "OWNER" } },
       },
-      include: {
-        projects: {
-          include: { tasks: { orderBy: { createdAt: "asc" } } },
-          orderBy: { createdAt: "asc" },
-        },
-      },
+      include: workspaceInclude,
     });
   }
 
@@ -104,12 +125,7 @@ export async function getInitialWorkspaceData() {
 
     workspace = (await prisma.workspace.findUnique({
       where: { id: workspace.id },
-      include: {
-        projects: {
-          include: { tasks: { orderBy: { createdAt: "asc" } } },
-          orderBy: { createdAt: "asc" },
-        },
-      },
+      include: workspaceInclude,
     }))!;
   }
 
@@ -231,4 +247,144 @@ export async function getProjectTasksAction(projectId: string) {
 
   if (!project) throw new Error("Project not found");
   return project;
+}
+
+/* =========================================================
+   Fungsi-Fungsi Real Multi-User (Member, Messages, Activities)
+   ========================================================= */
+
+// 1. Tambah Member Asli ke Workspace via Email
+export async function addMemberByEmailAction(workspaceId: string, email: string) {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) throw new Error("Unauthorized");
+
+  const targetUser = await prisma.user.findUnique({
+    where: { email: email.trim().toLowerCase() },
+  });
+
+  if (!targetUser) {
+    throw new Error("User dengan email tersebut belum terdaftar di aplikasi.");
+  }
+
+  const existing = await prisma.membership.findUnique({
+    where: {
+      userId_workspaceId: {
+        userId: targetUser.id,
+        workspaceId,
+      },
+    },
+  });
+
+  if (existing) {
+    throw new Error("User ini sudah menjadi member di workspace.");
+  }
+
+  return await prisma.membership.create({
+    data: {
+      workspaceId,
+      userId: targetUser.id,
+      role: "MEMBER",
+    },
+    include: {
+      user: {
+        select: { id: true, name: true, email: true, image: true },
+      },
+    },
+  });
+}
+
+// 2. Ambil Daftar Member Asli
+export async function getWorkspaceMembersAction(workspaceId: string) {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) throw new Error("Unauthorized");
+
+  return await prisma.membership.findMany({
+    where: { workspaceId },
+    include: {
+      user: {
+        select: { id: true, name: true, email: true, image: true },
+      },
+    },
+    orderBy: { joinedAt: "asc" },
+  });
+}
+
+// 3. Ambil Pesan Asli Workspace
+export async function getWorkspaceMessagesAction(workspaceId: string) {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) throw new Error("Unauthorized");
+
+  return await prisma.message.findMany({
+    where: { workspaceId },
+    include: {
+      sender: {
+        select: { id: true, name: true, email: true, image: true },
+      },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+}
+
+// 4. Kirim Pesan Asli ke Workspace
+export async function sendMessageAction(workspaceId: string, content: string) {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) throw new Error("Unauthorized");
+
+  if (!content.trim()) throw new Error("Content cannot be empty");
+
+  return await prisma.message.create({
+    data: {
+      workspaceId,
+      senderId: session.user.id,
+      content: content.trim(),
+    },
+    include: {
+      sender: {
+        select: { id: true, name: true, email: true, image: true },
+      },
+    },
+  });
+}
+
+// 5. Ambil Aktivitas Asli
+export async function getWorkspaceActivitiesAction(workspaceId: string) {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) throw new Error("Unauthorized");
+
+  return await prisma.activity.findMany({
+    where: { workspaceId },
+    include: {
+      user: {
+        select: { id: true, name: true, email: true, image: true },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 20,
+  });
+}
+
+// 6. Log Aktivitas Asli
+export async function logActivityAction(data: {
+  workspaceId: string;
+  action: string;
+  targetItem: string;
+  project: string;
+}) {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) throw new Error("Unauthorized");
+
+  return await prisma.activity.create({
+    data: {
+      workspaceId: data.workspaceId,
+      userId: session.user.id,
+      action: data.action,
+      targetItem: data.targetItem,
+      project: data.project,
+    },
+    include: {
+      user: {
+        select: { id: true, name: true, email: true, image: true },
+      },
+    },
+  });
 }
