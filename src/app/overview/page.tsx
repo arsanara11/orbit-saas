@@ -139,7 +139,7 @@ export default function OverviewPage() {
             name: p.name,
             taskCount: p.tasks ? p.tasks.length : 0,
             completedTaskCount: p.tasks
-              ? p.tasks.filter((t) => t.status === "IN_REVIEW" || t.status === "COMPLETED").length
+              ? p.tasks.filter((t) => t.status === "IN_REVIEW").length
               : 0,
             type: p.description?.startsWith("[PERSONAL]") ? "Personal" : "Team",
             category:
