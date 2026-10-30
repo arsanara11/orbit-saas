@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { authClient } from "@/lib/auth-client";
+import { useWorkspace } from "@/context/WorkspaceContext";
 import {
   getInitialWorkspaceData,
   createProjectAction,
@@ -120,9 +121,34 @@ function Icon({ name, size = 18 }: { name: string; size?: number }) {
   return <svg {...common}>{paths[name] || paths.grid}</svg>;
 }
 
-function Avatar({ initials, index = 0, onClick }: { initials: string; index?: number; onClick?: () => void }) {
+function Avatar({
+  initials,
+  src,
+  index = 0,
+  onClick,
+}: {
+  initials: string;
+  src?: string | null;
+  index?: number;
+  onClick?: () => void;
+}) {
+  if (src) {
+    return (
+      <img
+        src={src}
+        alt={initials}
+        onClick={onClick}
+        className="w-7 h-7 rounded-full object-cover cursor-pointer border border-[var(--line)] shrink-0"
+      />
+    );
+  }
+
   return (
-    <span className={`avatar avatar-${index % 4} cursor-pointer`} title={initials} onClick={onClick}>
+    <span
+      className={`avatar avatar-${index % 4} cursor-pointer`}
+      title={initials}
+      onClick={onClick}
+    >
       {initials}
     </span>
   );
@@ -142,6 +168,7 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
   const searchParams = useSearchParams();
   const router = useRouter();
   const { data: session, isPending } = authClient.useSession();
+  const { profile } = useWorkspace();
 
   const [dark, setDark] = useState(true);
   const [workspaceId, setWorkspaceId] = useState<string>("");
@@ -159,7 +186,6 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
 
   const [showWorkspaceMenu, setShowWorkspaceMenu] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
-  const [showNotifications, setShowNotifications] = useState(false);
   const [showMembersModal, setShowMembersModal] = useState(false);
   const [showStorageModal, setShowStorageModal] = useState(false);
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
@@ -214,9 +240,10 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
     }
   }, [isPending, session, router]);
 
-  const userInitials = useMemo(() => getInitials(session?.user?.name), [session]);
-  const userName = session?.user?.name || "User";
-  const userEmail = session?.user?.email || "";
+  const userName = profile.name || session?.user?.name || "User";
+  const userEmail = profile.email || session?.user?.email || "";
+  const userInitials = profile.initials || getInitials(userName);
+  const userImage = profile.avatarUrl || session?.user?.image;
 
   const currentProjectName = useMemo(() => {
     if (activeProjectId) {
@@ -304,6 +331,7 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
 
   return (
     <main className={`orbit-app ${dark ? "dark" : "light"}`}>
+      {/* BROWSER BAR */}
       <div className="browser-bar">
         <div className="traffic-lights">
           <i />
@@ -329,6 +357,7 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
           gridTemplateColumns: showSubSidebar ? undefined : "60px 1fr",
         }}
       >
+        {/* RAIL SIDEBAR */}
         <aside className="rail">
           <div className="brand-mark">
             <Icon name="spark" size={22} />
@@ -362,6 +391,7 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
           </div>
         </aside>
 
+        {/* PROJECT SIDEBAR */}
         {showSubSidebar && (
           <aside className="project-sidebar">
             <div className="side-heading">
@@ -608,7 +638,11 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
               </button>
 
               <div className="profile-row relative">
-                <Avatar initials={userInitials} onClick={() => setShowProfileMenu(!showProfileMenu)} />
+                <Avatar
+                  initials={userInitials}
+                  src={userImage}
+                  onClick={() => setShowProfileMenu(!showProfileMenu)}
+                />
                 <div className="min-w-0 flex-1">
                   <strong className="truncate">{userName}</strong>
                   <small className="truncate block">{userEmail || "Free workspace"}</small>
@@ -619,32 +653,15 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
                 >
                   <Icon name="more" />
                 </button>
-
-                {showProfileMenu && (
-                  <>
-                    <div className="fixed inset-0 z-20" onClick={() => setShowProfileMenu(false)} />
-                    <div className="absolute bottom-12 right-2 z-30 w-40 rounded-xl border border-[var(--line)] bg-[var(--card)] p-2 shadow-xl text-xs text-white">
-                      <button
-                        onClick={() =>
-                          authClient.signOut({
-                            fetchOptions: { onSuccess: () => router.push("/login") },
-                          })
-                        }
-                        className="w-full text-left px-3 py-2 rounded-lg text-red-400 hover:bg-[#35383a] transition cursor-pointer"
-                      >
-                        Sign out
-                      </button>
-                    </div>
-                  </>
-                )}
               </div>
             </div>
           </aside>
         )}
 
+        {/* MAIN SECTION */}
         <section className="main-content" style={{ minWidth: 0, width: "100%" }}>
-          {/* Header Asli Milikmu Tanpa Ubah CSS */}
           <header className="topbar">
+            {/* Clickable Breadcrumbs */}
             <div className="breadcrumbs">
               <Link href="/overview" className="capitalize hover:underline">
                 Orbit
@@ -665,17 +682,65 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
               <span className="last-updated">
                 <i /> Saved just now
               </span>
+
+              {/* Notification Bell Button */}
               <button
                 className="top-icon cursor-pointer"
-                onClick={() => setShowNotifications(!showNotifications)}
+                onClick={() => router.push("/notifications")}
+                title="Notifications"
               >
                 <Icon name="bell" />
                 <i />
               </button>
-              <button className="top-icon cursor-pointer" onClick={() => setDark(!dark)}>
+
+              {/* Theme Toggle */}
+              <button className="top-icon cursor-pointer" onClick={() => setDark(!dark)} title="Toggle theme">
                 <Icon name="moon" />
               </button>
-              <Avatar initials={userInitials} onClick={() => setShowProfileMenu(!showProfileMenu)} />
+
+              {/* Topbar Avatar + Profile Dropdown Menu */}
+              <div className="relative">
+                <Avatar
+                  initials={userInitials}
+                  src={userImage}
+                  onClick={() => setShowProfileMenu(!showProfileMenu)}
+                />
+
+                {showProfileMenu && (
+                  <>
+                    <div className="fixed inset-0 z-20" onClick={() => setShowProfileMenu(false)} />
+                    <div className="absolute right-0 top-10 z-30 w-48 rounded-xl border border-[var(--line)] bg-[var(--card)] p-2 shadow-2xl text-xs text-white space-y-1">
+                      <div className="px-3 py-2 border-b border-[var(--line)]">
+                        <strong className="block truncate font-semibold">{userName}</strong>
+                        <span className="text-[10px] text-gray-400 block truncate">
+                          {userEmail || "Free workspace"}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setShowProfileMenu(false);
+                          router.push("/settings");
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-lg hover:bg-[#35383a] transition cursor-pointer flex items-center gap-2"
+                      >
+                        <Icon name="settings" size={14} /> Settings
+                      </button>
+                      <button
+                        onClick={() =>
+                          authClient.signOut({
+                            fetchOptions: { onSuccess: () => router.push("/login") },
+                          })
+                        }
+                        className="w-full text-left px-3 py-2 rounded-lg text-red-400 hover:bg-[#35383a] transition cursor-pointer flex items-center gap-2"
+                      >
+                        Sign out
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Invite Members Button */}
               <button
                 className="invite-button cursor-pointer"
                 onClick={() => setShowMembersModal(true)}
@@ -683,19 +748,6 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
                 <Icon name="plus" size={15} /> Invite members
               </button>
             </div>
-
-            {showNotifications && (
-              <>
-                <div className="fixed inset-0 z-20" onClick={() => setShowNotifications(false)} />
-                <div className="notification-pop z-30">
-                  <strong>Notifications</strong>
-                  <p>
-                    <span className="notice-dot" /> All workspace services are operational.
-                  </p>
-                  <button onClick={() => setShowNotifications(false)}>Mark as read</button>
-                </div>
-              </>
-            )}
           </header>
 
           {children}
@@ -709,6 +761,7 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
         </section>
       </div>
 
+      {/* STORAGE MODAL */}
       {showStorageModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6 shadow-2xl text-white space-y-4">
@@ -762,6 +815,7 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
         </div>
       )}
 
+      {/* MEMBERS & INVITE MODAL */}
       {showMembersModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6 shadow-2xl text-white space-y-4">
@@ -813,7 +867,7 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
                     className="flex items-center justify-between p-2.5 rounded-xl bg-[#1e2022] border border-[var(--line)] text-xs"
                   >
                     <div className="flex items-center gap-3 min-w-0">
-                      <Avatar initials={initials} index={idx} />
+                      <Avatar initials={initials} src={m.user.image} index={idx} />
                       <div className="min-w-0">
                         <strong className="block text-xs font-semibold truncate text-white">{m.user.name}</strong>
                         <span className="text-[10px] text-gray-400 truncate block">{m.user.email}</span>
@@ -843,6 +897,7 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
         </div>
       )}
 
+      {/* NEW PROJECT MODAL */}
       {showNewProjectModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-md">
           <form
