@@ -2,10 +2,12 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { authClient } from "@/lib/auth-client";
 import {
   getInitialWorkspaceData,
   createProjectAction,
+  addMemberByEmailAction,
 } from "@/app/actions";
 
 type ProjectType = {
@@ -17,6 +19,17 @@ type ProjectType = {
   category: "SaaS Product" | "Design System" | "Research" | "General";
 };
 
+type DBMember = {
+  id: string;
+  role: string;
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    image: string | null;
+  };
+};
+
 const navItems = [
   { label: "Overview", icon: "grid", href: "/overview" },
   { label: "Projects", icon: "folder", href: "/projects" },
@@ -24,13 +37,6 @@ const navItems = [
   { label: "Messages", icon: "message", href: "/messages" },
   { label: "Calendar", icon: "calendar", href: "/calendar" },
   { label: "Settings", icon: "settings", href: "/settings" },
-];
-
-const teamMembers = [
-  { name: "Anisa Nabila", role: "Project Lead", initials: "AN", email: "anisa@orbit.app" },
-  { name: "Ahmad Rizky", role: "Frontend Developer", initials: "AR", email: "rizky@orbit.app" },
-  { name: "M. Kenzie", role: "UI/UX Designer", initials: "MK", email: "kenzie@orbit.app" },
-  { name: "Jasmine L.", role: "Backend Developer", initials: "JL", email: "jasmine@orbit.app" },
 ];
 
 function Icon({ name, size = 18 }: { name: string; size?: number }) {
@@ -114,9 +120,9 @@ function Icon({ name, size = 18 }: { name: string; size?: number }) {
   return <svg {...common}>{paths[name] || paths.grid}</svg>;
 }
 
-function Avatar({ initials, index = 0 }: { initials: string; index?: number }) {
+function Avatar({ initials, index = 0, onClick }: { initials: string; index?: number; onClick?: () => void }) {
   return (
-    <span className={`avatar avatar-${index % 4}`} title={initials}>
+    <span className={`avatar avatar-${index % 4} cursor-pointer`} title={initials} onClick={onClick}>
       {initials}
     </span>
   );
@@ -138,6 +144,7 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
   const { data: session, isPending } = authClient.useSession();
 
   const [dark, setDark] = useState(true);
+  const [workspaceId, setWorkspaceId] = useState<string>("");
   const [workspaceTab, setWorkspaceTab] = useState<"Team" | "Personal">("Team");
   const [projectsList, setProjectsList] = useState<ProjectType[]>([]);
   const [projectSearchQuery, setProjectSearchQuery] = useState("");
@@ -145,6 +152,10 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
   const [isCategoriesOpen, setIsCategoriesOpen] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [activeQuickView, setActiveQuickView] = useState<string>("todays-focus");
+
+  const [members, setMembers] = useState<DBMember[]>([]);
+  const [inviteEmailInput, setInviteEmailInput] = useState("");
+  const [inviteStatusMsg, setInviteStatusMsg] = useState<string | null>(null);
 
   const [showWorkspaceMenu, setShowWorkspaceMenu] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
@@ -169,28 +180,35 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
     if (session) {
       getInitialWorkspaceData()
         .then((res) => {
-          const formattedProjects: ProjectType[] = res.workspace.projects.map((p, idx) => {
-            const isPersonal = p.description?.startsWith("[PERSONAL]");
-            return {
-              id: p.id,
-              name: p.name,
-              description:
-                isPersonal && p.description
-                  ? p.description.replace("[PERSONAL]", "").trim()
-                  : p.description || "",
-              taskCount: p.tasks ? p.tasks.length : 0,
-              type: isPersonal ? "Personal" : "Team",
-              category:
-                idx === 0
-                  ? "SaaS Product"
-                  : idx === 1
-                  ? "Design System"
-                  : idx === 2
-                  ? "Research"
-                  : "General",
-            };
-          });
-          setProjectsList(formattedProjects);
+          if (res?.workspace) {
+            setWorkspaceId(res.workspace.id);
+            if (res.workspace.memberships) {
+              setMembers(res.workspace.memberships as unknown as DBMember[]);
+            }
+
+            const formattedProjects: ProjectType[] = res.workspace.projects.map((p, idx) => {
+              const isPersonal = p.description?.startsWith("[PERSONAL]");
+              return {
+                id: p.id,
+                name: p.name,
+                description:
+                  isPersonal && p.description
+                    ? p.description.replace("[PERSONAL]", "").trim()
+                    : p.description || "",
+                taskCount: p.tasks ? p.tasks.length : 0,
+                type: isPersonal ? "Personal" : "Team",
+                category:
+                  idx === 0
+                    ? "SaaS Product"
+                    : idx === 1
+                    ? "Design System"
+                    : idx === 2
+                    ? "Research"
+                    : "General",
+              };
+            });
+            setProjectsList(formattedProjects);
+          }
         })
         .catch(console.error);
     }
@@ -235,7 +253,6 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
 
     try {
       const rawDesc = newProjectDescInput.trim();
-
       const created = await createProjectAction(newProjectNameInput.trim());
 
       const newProjUI: ProjectType = {
@@ -254,6 +271,23 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
       router.push(`/projects?id=${created.id}`);
     } catch (error) {
       console.error("Gagal membuat project:", error);
+    }
+  }
+
+  async function handleInviteMemberSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!inviteEmailInput.trim() || !workspaceId) return;
+
+    setInviteStatusMsg("Inviting...");
+    try {
+      const newMember = await addMemberByEmailAction(workspaceId, inviteEmailInput.trim());
+      setMembers((prev) => [...prev, newMember as unknown as DBMember]);
+      setInviteStatusMsg("Success! Member added.");
+      setInviteEmailInput("");
+      setTimeout(() => setInviteStatusMsg(null), 2000);
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : "Failed to invite member";
+      setInviteStatusMsg(`Error: ${errorMessage}`);
     }
   }
 
@@ -475,9 +509,7 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
                   onClick={() => setIsRecentOpen(!isRecentOpen)}
                 >
                   <span>RECENT</span>
-                  <span
-                    className={`transform transition-transform ${isRecentOpen ? "rotate-0" : "-rotate-90"}`}
-                  >
+                  <span className={`transform transition-transform ${isRecentOpen ? "rotate-0" : "-rotate-90"}`}>
                     <Icon name="chevron" size={13} />
                   </span>
                 </div>
@@ -513,11 +545,7 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
                   onClick={() => setIsCategoriesOpen(!isCategoriesOpen)}
                 >
                   <span>CATEGORIES</span>
-                  <span
-                    className={`transform transition-transform ${
-                      isCategoriesOpen ? "rotate-0" : "-rotate-90"
-                    }`}
-                  >
+                  <span className={`transform transition-transform ${isCategoriesOpen ? "rotate-0" : "-rotate-90"}`}>
                     <Icon name="chevron" size={13} />
                   </span>
                 </div>
@@ -580,7 +608,7 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
               </button>
 
               <div className="profile-row relative">
-                <Avatar initials={userInitials} />
+                <Avatar initials={userInitials} onClick={() => setShowProfileMenu(!showProfileMenu)} />
                 <div className="min-w-0 flex-1">
                   <strong className="truncate">{userName}</strong>
                   <small className="truncate block">{userEmail || "Free workspace"}</small>
@@ -615,9 +643,16 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
         )}
 
         <section className="main-content" style={{ minWidth: 0, width: "100%" }}>
+          {/* Header Asli Milikmu Tanpa Ubah CSS */}
           <header className="topbar">
             <div className="breadcrumbs">
-              <span className="capitalize">{pathname.replace("/", "")}</span>
+              <Link href="/overview" className="capitalize hover:underline">
+                Orbit
+              </Link>
+              <span className="crumb-slash">/</span>
+              <Link href={pathname} className="capitalize hover:underline font-semibold text-white">
+                {pathname.replace("/", "")}
+              </Link>
               {pathname.startsWith("/projects") && (
                 <>
                   <span className="crumb-slash">/</span>
@@ -640,7 +675,7 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
               <button className="top-icon cursor-pointer" onClick={() => setDark(!dark)}>
                 <Icon name="moon" />
               </button>
-              <Avatar initials={userInitials} />
+              <Avatar initials={userInitials} onClick={() => setShowProfileMenu(!showProfileMenu)} />
               <button
                 className="invite-button cursor-pointer"
                 onClick={() => setShowMembersModal(true)}
@@ -691,10 +726,10 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
               <div className="p-3 rounded-xl bg-[#1e2022] border border-[var(--line)] space-y-2">
                 <div className="flex justify-between font-medium">
                   <span>Used Storage</span>
-                  <span className="text-violet-400">6.8 GB / 10 GB</span>
+                  <span className="text-[#98E499]">6.8 GB / 10 GB</span>
                 </div>
                 <div className="w-full bg-[#35383a] h-2 rounded-full overflow-hidden">
-                  <div className="bg-violet-500 h-full rounded-full w-[68%]" />
+                  <div className="bg-[#98E499] h-full rounded-full w-[68%]" />
                 </div>
               </div>
 
@@ -722,16 +757,6 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
               >
                 Close
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  alert("Storage upgrade option selected.");
-                  setShowStorageModal(false);
-                }}
-                className="px-4 py-2 rounded-xl bg-violet-600 text-xs text-white font-medium hover:bg-violet-500"
-              >
-                Upgrade Plan
-              </button>
             </div>
           </div>
         </div>
@@ -739,41 +764,81 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
 
       {showMembersModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6 shadow-2xl text-white">
-            <div className="flex items-center justify-between pb-4 border-b border-[var(--line)]">
-              <strong className="text-sm font-semibold">Project Members</strong>
+          <div className="w-full max-w-md rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6 shadow-2xl text-white space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-[var(--line)]">
+              <strong className="text-sm font-semibold">Workspace Members ({members.length})</strong>
               <button
-                onClick={() => setShowMembersModal(false)}
+                onClick={() => {
+                  setShowMembersModal(false);
+                  setInviteStatusMsg(null);
+                }}
                 className="text-gray-400 hover:text-white cursor-pointer"
               >
                 ✕
               </button>
             </div>
-            <div className="mt-4 space-y-3">
-              {teamMembers.map((m, idx) => (
-                <div
-                  key={m.email}
-                  className="flex items-center justify-between p-2.5 rounded-xl bg-[#1e2022] border border-[var(--line)]"
+
+            <form onSubmit={handleInviteMemberSubmit} className="space-y-2">
+              <label className="block text-xs text-gray-400">Invite Member via Email</label>
+              <div className="flex gap-2">
+                <input
+                  type="email"
+                  required
+                  placeholder="user@example.com"
+                  value={inviteEmailInput}
+                  onChange={(e) => setInviteEmailInput(e.target.value)}
+                  className="flex-1 rounded-xl border border-[var(--line)] bg-[#1e2022] px-3 py-2 text-xs text-white focus:outline-none focus:border-[#98E499]"
+                />
+                <button
+                  type="submit"
+                  style={{ backgroundColor: "#98E499", color: "#26282a" }}
+                  className="px-3 py-2 rounded-xl text-xs font-bold hover:bg-[#85d886]"
                 >
-                  <div className="flex items-center gap-3">
-                    <Avatar initials={m.initials} index={idx} />
-                    <div>
-                      <strong className="block text-xs font-semibold">{m.name}</strong>
-                      <span className="text-[10px] text-gray-400">{m.email}</span>
+                  Invite
+                </button>
+              </div>
+              {inviteStatusMsg && (
+                <p className={`text-[11px] ${inviteStatusMsg.startsWith("Error") ? "text-red-400" : "text-[#98E499]"}`}>
+                  {inviteStatusMsg}
+                </p>
+              )}
+            </form>
+
+            <div className="mt-4 space-y-2 max-h-52 overflow-y-auto custom-scrollbar">
+              {members.map((m, idx) => {
+                const initials = m.user.name ? m.user.name.slice(0, 2).toUpperCase() : "US";
+                return (
+                  <div
+                    key={m.id}
+                    className="flex items-center justify-between p-2.5 rounded-xl bg-[#1e2022] border border-[var(--line)] text-xs"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Avatar initials={initials} index={idx} />
+                      <div className="min-w-0">
+                        <strong className="block text-xs font-semibold truncate text-white">{m.user.name}</strong>
+                        <span className="text-[10px] text-gray-400 truncate block">{m.user.email}</span>
+                      </div>
                     </div>
+                    <span className="text-[10px] rounded-md bg-[#35383a] px-2 py-0.5 text-[#98E499] font-medium">
+                      {m.role}
+                    </span>
                   </div>
-                  <span className="text-[10px] rounded-md bg-[#35383a] px-2 py-1 text-violet-300">
-                    {m.role}
-                  </span>
-                </div>
-              ))}
+                );
+              })}
             </div>
-            <button
-              onClick={() => setShowMembersModal(false)}
-              className="mt-6 w-full py-2.5 rounded-xl bg-violet-600 text-xs text-white font-semibold hover:bg-violet-500 transition cursor-pointer"
-            >
-              Close
-            </button>
+
+            <div className="flex justify-end pt-3 border-t border-[var(--line)]">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowMembersModal(false);
+                  setInviteStatusMsg(null);
+                }}
+                className="px-4 py-1.5 rounded-xl bg-[#242628] text-xs font-semibold text-white cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -803,7 +868,7 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
                 placeholder="e.g. Mobile App Redesign"
                 value={newProjectNameInput}
                 onChange={(e) => setNewProjectNameInput(e.target.value)}
-                className="w-full rounded-xl border border-[var(--line)] bg-[#1e2022] px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-violet-500"
+                className="w-full rounded-xl border border-[var(--line)] bg-[#1e2022] px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-[#98E499]"
               />
             </div>
 
@@ -814,7 +879,7 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
                 placeholder="Optional description..."
                 value={newProjectDescInput}
                 onChange={(e) => setNewProjectDescInput(e.target.value)}
-                className="w-full rounded-xl border border-[var(--line)] bg-[#1e2022] px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-violet-500"
+                className="w-full rounded-xl border border-[var(--line)] bg-[#1e2022] px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-[#98E499]"
               />
             </div>
 
@@ -828,7 +893,8 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 rounded-xl bg-violet-600 text-xs text-white font-medium hover:bg-violet-500"
+                style={{ backgroundColor: "#98E499", color: "#26282a" }}
+                className="px-4 py-2 rounded-xl text-xs font-bold hover:bg-[#85d886]"
               >
                 Create Project
               </button>
