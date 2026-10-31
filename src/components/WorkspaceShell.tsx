@@ -9,6 +9,7 @@ import {
   getInitialWorkspaceData,
   createProjectAction,
   addMemberByEmailAction,
+  createWorkspaceAction,
 } from "@/app/actions";
 
 type ProjectType = {
@@ -29,6 +30,12 @@ type DBMember = {
     email: string;
     image: string | null;
   };
+};
+
+type UserWorkspaceItem = {
+  id: string;
+  name: string;
+  slug: string;
 };
 
 const navItems = [
@@ -172,6 +179,10 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
 
   const [dark, setDark] = useState(true);
   const [workspaceId, setWorkspaceId] = useState<string>("");
+  const [workspaceName, setWorkspaceName] = useState<string>("Orbit Workspace");
+  const [userWorkspaces, setUserWorkspaces] = useState<UserWorkspaceItem[]>([]);
+  const [showWorkspaceSwitcher, setShowWorkspaceSwitcher] = useState(false);
+
   const [workspaceTab, setWorkspaceTab] = useState<"Team" | "Personal">("Team");
   const [projectsList, setProjectsList] = useState<ProjectType[]>([]);
   const [projectSearchQuery, setProjectSearchQuery] = useState("");
@@ -189,6 +200,9 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
   const [showMembersModal, setShowMembersModal] = useState(false);
   const [showStorageModal, setShowStorageModal] = useState(false);
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
+  const [showNewWorkspaceModal, setShowNewWorkspaceModal] = useState(false);
+
+  const [newWorkspaceNameInput, setNewWorkspaceNameInput] = useState("");
   const [newProjectNameInput, setNewProjectNameInput] = useState("");
   const [newProjectDescInput, setNewProjectDescInput] = useState("");
 
@@ -208,6 +222,10 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
         .then((res) => {
           if (res?.workspace) {
             setWorkspaceId(res.workspace.id);
+            setWorkspaceName(res.workspace.name);
+            if (res.userWorkspaces) {
+              setUserWorkspaces(res.userWorkspaces);
+            }
             if (res.workspace.memberships) {
               setMembers(res.workspace.memberships as unknown as DBMember[]);
             }
@@ -274,13 +292,37 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
     }
   }
 
+  async function handleSwitchWorkspace(targetId: string) {
+    setShowWorkspaceSwitcher(false);
+    const res = await getInitialWorkspaceData(targetId);
+    if (res?.workspace) {
+      setWorkspaceId(res.workspace.id);
+      setWorkspaceName(res.workspace.name);
+      router.refresh();
+    }
+  }
+
+  async function handleCreateWorkspaceSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newWorkspaceNameInput.trim()) return;
+
+    try {
+      const created = await createWorkspaceAction(newWorkspaceNameInput.trim());
+      setShowNewWorkspaceModal(false);
+      setNewWorkspaceNameInput("");
+      handleSwitchWorkspace(created.id);
+    } catch (err) {
+      console.error("Failed to create workspace:", err);
+    }
+  }
+
   async function handleCreateNewProjectSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!newProjectNameInput.trim()) return;
 
     try {
       const rawDesc = newProjectDescInput.trim();
-      const created = await createProjectAction(newProjectNameInput.trim());
+      const created = await createProjectAction(newProjectNameInput.trim(), workspaceId);
 
       const newProjUI: ProjectType = {
         id: created.id,
@@ -307,11 +349,15 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
 
     setInviteStatusMsg("Inviting...");
     try {
-      const newMember = await addMemberByEmailAction(workspaceId, inviteEmailInput.trim());
-      setMembers((prev) => [...prev, newMember as unknown as DBMember]);
-      setInviteStatusMsg("Success! Member added.");
+      const res = await addMemberByEmailAction(workspaceId, inviteEmailInput.trim());
+      if ("token" in res) {
+        setInviteStatusMsg("Invite link generated for new user!");
+      } else {
+        setMembers((prev) => [...prev, res as unknown as DBMember]);
+        setInviteStatusMsg("Success! Member added.");
+      }
       setInviteEmailInput("");
-      setTimeout(() => setInviteStatusMsg(null), 2000);
+      setTimeout(() => setInviteStatusMsg(null), 3000);
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : "Failed to invite member";
       setInviteStatusMsg(`Error: ${errorMessage}`);
@@ -395,10 +441,54 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
         {showSubSidebar && (
           <aside className="project-sidebar">
             <div className="side-heading">
-              <div>
-                <span className="eyebrow">WORKSPACE</span>
-                <h2>{isOverviewPage ? "Overview" : "Projects"}</h2>
+              <div className="relative">
+                <span
+                  className="eyebrow flex items-center gap-1 cursor-pointer"
+                  onClick={() => setShowWorkspaceSwitcher(!showWorkspaceSwitcher)}
+                >
+                  WORKSPACE <Icon name="chevron" size={10} />
+                </span>
+                <h2
+                  className="cursor-pointer font-bold truncate"
+                  onClick={() => setShowWorkspaceSwitcher(!showWorkspaceSwitcher)}
+                >
+                  {workspaceName}
+                </h2>
+
+                {/* WORKSPACE SWITCHER DROPDOWN */}
+                {showWorkspaceSwitcher && (
+                  <>
+                    <div className="fixed inset-0 z-20" onClick={() => setShowWorkspaceSwitcher(false)} />
+                    <div className="absolute top-10 left-0 z-30 w-56 rounded-xl border border-[var(--line)] bg-[var(--card)] p-2 shadow-2xl text-xs text-white space-y-1">
+                      <span className="text-[10px] font-bold text-gray-400 px-2 uppercase block">Your Workspaces</span>
+                      {userWorkspaces.map((w) => (
+                        <button
+                          key={w.id}
+                          onClick={() => handleSwitchWorkspace(w.id)}
+                          className={`w-full text-left px-3 py-2 rounded-lg transition flex items-center justify-between cursor-pointer ${
+                            w.id === workspaceId ? "bg-[#98E499]/10 text-[#98E499] font-bold" : "hover:bg-[#35383a]"
+                          }`}
+                        >
+                          <span className="truncate">{w.name}</span>
+                          {w.id === workspaceId && <span>✓</span>}
+                        </button>
+                      ))}
+                      <div className="pt-1 border-t border-[var(--line)]">
+                        <button
+                          onClick={() => {
+                            setShowWorkspaceSwitcher(false);
+                            setShowNewWorkspaceModal(true);
+                          }}
+                          className="w-full text-left px-3 py-2 rounded-lg text-[#98E499] hover:bg-[#35383a] transition flex items-center gap-1.5 cursor-pointer font-semibold"
+                        >
+                          <Icon name="plus" size={13} /> Create Workspace
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
+
               <div className="relative">
                 <button
                   className="icon-button cursor-pointer"
@@ -760,6 +850,56 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
           </footer>
         </section>
       </div>
+
+      {/* CREATE WORKSPACE MODAL */}
+      {showNewWorkspaceModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-md">
+          <form
+            onSubmit={handleCreateWorkspaceSubmit}
+            className="w-full max-w-md rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6 shadow-2xl text-white space-y-4"
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-[var(--line)]">
+              <strong className="text-sm font-semibold">Create New Workspace</strong>
+              <button
+                type="button"
+                onClick={() => setShowNewWorkspaceModal(false)}
+                className="text-gray-400 hover:text-white cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Workspace Name</label>
+              <input
+                required
+                autoFocus
+                placeholder="e.g. Acme Corp Studio"
+                value={newWorkspaceNameInput}
+                onChange={(e) => setNewWorkspaceNameInput(e.target.value)}
+                className="w-full rounded-xl border border-[var(--line)] bg-[#1e2022] px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-[#98E499]"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-[var(--line)]">
+              <button
+                type="button"
+                onClick={() => setShowNewWorkspaceModal(false)}
+                className="px-4 py-2 rounded-xl text-xs text-gray-300 hover:bg-[#35383a]"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                style={{ backgroundColor: "#98E499", color: "#26282a" }}
+                className="px-4 py-2 rounded-xl text-xs font-bold hover:bg-[#85d886]"
+              >
+                Create Workspace
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* STORAGE MODAL */}
       {showStorageModal && (

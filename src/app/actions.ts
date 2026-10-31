@@ -3,6 +3,7 @@
 import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { randomBytes } from "crypto";
 
 type TaskStatusType = "TODO" | "IN_PROGRESS" | "IN_REVIEW" | "DONE";
 type TaskPriorityType = "LOW" | "MEDIUM" | "HIGH" | "URGENT";
@@ -45,6 +46,20 @@ const defaultProjects = [
   },
 ];
 
+async function requireAuthSession() {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) throw new Error("Unauthorized");
+  return session;
+}
+
+async function requireWorkspaceMember(userId: string, workspaceId: string) {
+  const membership = await prisma.membership.findUnique({
+    where: { userId_workspaceId: { userId, workspaceId } },
+  });
+  if (!membership) throw new Error("Forbidden: Access denied to this workspace");
+  return membership;
+}
+
 const workspaceInclude = {
   projects: {
     include: { tasks: { orderBy: { createdAt: "asc" as const } } },
@@ -56,6 +71,7 @@ const workspaceInclude = {
         select: { id: true, name: true, email: true, image: true },
       },
     },
+    orderBy: { joinedAt: "asc" as const },
   },
   messages: {
     include: {
@@ -76,17 +92,28 @@ const workspaceInclude = {
   },
 };
 
-export async function getInitialWorkspaceData() {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
+/* =========================================================
+   Workspace Data & Multi-Tenancy Core
+   ========================================================= */
 
-  if (!session) throw new Error("Unauthorized");
+export async function getInitialWorkspaceData(targetWorkspaceId?: string) {
+  const session = await requireAuthSession();
+  let workspace = null;
 
-  let workspace = await prisma.workspace.findFirst({
-    where: { memberships: { some: { userId: session.user.id } } },
-    include: workspaceInclude,
-  });
+  if (targetWorkspaceId) {
+    await requireWorkspaceMember(session.user.id, targetWorkspaceId);
+    workspace = await prisma.workspace.findUnique({
+      where: { id: targetWorkspaceId },
+      include: workspaceInclude,
+    });
+  }
+
+  if (!workspace) {
+    workspace = await prisma.workspace.findFirst({
+      where: { memberships: { some: { userId: session.user.id } } },
+      include: workspaceInclude,
+    });
+  }
 
   if (!workspace) {
     workspace = await prisma.workspace.create({
@@ -100,7 +127,7 @@ export async function getInitialWorkspaceData() {
     });
   }
 
-  // Auto-seed projek default jika projek di database kurang dari 4
+  // Auto-seed projek default jika projek di workspace kurang dari 4
   if (workspace.projects.length < 4) {
     for (const projData of defaultProjects) {
       const exists = workspace.projects.some((p) => p.name === projData.name);
@@ -129,14 +156,96 @@ export async function getInitialWorkspaceData() {
     }))!;
   }
 
+  const userWorkspaces = await prisma.workspace.findMany({
+    where: { memberships: { some: { userId: session.user.id } } },
+    select: { id: true, name: true, slug: true },
+    orderBy: { createdAt: "asc" },
+  });
+
   const activeProject = workspace.projects[0];
 
   return {
     user: session.user,
     workspace,
+    userWorkspaces,
     project: activeProject,
-    tasks: activeProject.tasks,
+    tasks: activeProject?.tasks || [],
   };
+}
+
+export async function createWorkspaceAction(name: string) {
+  const session = await requireAuthSession();
+  const slug = `${name.toLowerCase().replace(/[^a-z0-9]/g, "-")}-${Date.now()}`;
+
+  return await prisma.workspace.create({
+    data: {
+      name: name.trim(),
+      slug,
+      ownerId: session.user.id,
+      memberships: { create: { userId: session.user.id, role: "OWNER" } },
+    },
+  });
+}
+
+/* =========================================================
+   Project & Task Operations
+   ========================================================= */
+
+export async function createProjectAction(name: string, workspaceId?: string) {
+  const session = await requireAuthSession();
+
+  let targetWorkspaceId = workspaceId;
+
+  if (!targetWorkspaceId) {
+    const membership = await prisma.membership.findFirst({
+      where: { userId: session.user.id },
+      select: { workspaceId: true },
+    });
+    if (!membership) throw new Error("Workspace not found");
+    targetWorkspaceId = membership.workspaceId;
+  }
+
+  await requireWorkspaceMember(session.user.id, targetWorkspaceId);
+
+  return await prisma.project.create({
+    data: {
+      name: name.trim(),
+      description: "Plan, collaborate, and ship great work together.",
+      workspaceId: targetWorkspaceId,
+    },
+    include: { tasks: { orderBy: { createdAt: "asc" } } },
+  });
+}
+
+export async function updateProjectNameAction(projectId: string, newName: string) {
+  const session = await requireAuthSession();
+
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { workspaceId: true },
+  });
+  if (!project) throw new Error("Project not found");
+
+  await requireWorkspaceMember(session.user.id, project.workspaceId);
+
+  return await prisma.project.update({
+    where: { id: projectId },
+    data: { name: newName.trim() },
+  });
+}
+
+export async function getProjectTasksAction(projectId: string) {
+  const session = await requireAuthSession();
+
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    include: { tasks: { orderBy: { createdAt: "asc" } } },
+  });
+
+  if (!project) throw new Error("Project not found");
+  await requireWorkspaceMember(session.user.id, project.workspaceId);
+
+  return project;
 }
 
 export async function createTaskAction(data: {
@@ -145,8 +254,15 @@ export async function createTaskAction(data: {
   status: TaskStatusType;
   priority: TaskPriorityType;
 }) {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) throw new Error("Unauthorized");
+  const session = await requireAuthSession();
+
+  const project = await prisma.project.findUnique({
+    where: { id: data.projectId },
+    select: { workspaceId: true },
+  });
+  if (!project) throw new Error("Project not found");
+
+  await requireWorkspaceMember(session.user.id, project.workspaceId);
 
   const userInitials = session.user.name
     ? session.user.name.slice(0, 2).toUpperCase()
@@ -154,7 +270,7 @@ export async function createTaskAction(data: {
 
   return await prisma.task.create({
     data: {
-      title: data.title,
+      title: data.title.trim(),
       description: "Add a description to keep the team aligned on next steps.",
       status: data.status,
       priority: data.priority,
@@ -166,30 +282,20 @@ export async function createTaskAction(data: {
 }
 
 export async function updateTaskStatusAction(taskId: string, newStatus: TaskStatusType) {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) throw new Error("Unauthorized");
+  const session = await requireAuthSession();
+
+  const task = await prisma.task.findUnique({
+    where: { id: taskId },
+    include: { project: { select: { workspaceId: true } } },
+  });
+  if (!task) throw new Error("Task not found");
+
+  await requireWorkspaceMember(session.user.id, task.project.workspaceId);
 
   return await prisma.task.update({
     where: { id: taskId },
     data: { status: newStatus },
   });
-}
-
-export async function updateProjectNameAction(projectId: string, newName: string) {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) throw new Error("Unauthorized");
-
-  return await prisma.project.update({
-    where: { id: projectId },
-    data: { name: newName },
-  });
-}
-
-export async function deleteTaskAction(taskId: string) {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) throw new Error("Unauthorized");
-
-  return await prisma.task.delete({ where: { id: taskId } });
 }
 
 export async function updateTaskAction(
@@ -201,13 +307,20 @@ export async function updateTaskAction(
     status?: TaskStatusType;
   }
 ) {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) throw new Error("Unauthorized");
+  const session = await requireAuthSession();
+
+  const task = await prisma.task.findUnique({
+    where: { id: taskId },
+    include: { project: { select: { workspaceId: true } } },
+  });
+  if (!task) throw new Error("Task not found");
+
+  await requireWorkspaceMember(session.user.id, task.project.workspaceId);
 
   return await prisma.task.update({
     where: { id: taskId },
     data: {
-      ...(data.title && { title: data.title }),
+      ...(data.title && { title: data.title.trim() }),
       ...(data.description !== undefined && { description: data.description }),
       ...(data.priority && { priority: data.priority }),
       ...(data.status && { status: data.status }),
@@ -215,55 +328,47 @@ export async function updateTaskAction(
   });
 }
 
-export async function createProjectAction(name: string) {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) throw new Error("Unauthorized");
+export async function deleteTaskAction(taskId: string) {
+  const session = await requireAuthSession();
 
-  const membership = await prisma.membership.findFirst({
-    where: { userId: session.user.id },
-    select: { workspaceId: true },
+  const task = await prisma.task.findUnique({
+    where: { id: taskId },
+    include: { project: { select: { workspaceId: true } } },
   });
+  if (!task) throw new Error("Task not found");
 
-  if (!membership) throw new Error("Workspace not found");
+  await requireWorkspaceMember(session.user.id, task.project.workspaceId);
 
-  return await prisma.project.create({
-    data: {
-      name,
-      description: "Plan, collaborate, and ship great work together.",
-      workspaceId: membership.workspaceId,
-    },
-    include: { tasks: { orderBy: { createdAt: "asc" } } },
-  });
-}
-
-export async function getProjectTasksAction(projectId: string) {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) throw new Error("Unauthorized");
-
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
-    include: { tasks: { orderBy: { createdAt: "asc" } } },
-  });
-
-  if (!project) throw new Error("Project not found");
-  return project;
+  return await prisma.task.delete({ where: { id: taskId } });
 }
 
 /* =========================================================
-   Fungsi-Fungsi Real Multi-User (Member, Messages, Activities)
+   Real Multi-User & Membership Operations
    ========================================================= */
 
-// 1. Tambah Member Asli ke Workspace via Email
 export async function addMemberByEmailAction(workspaceId: string, email: string) {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) throw new Error("Unauthorized");
+  const session = await requireAuthSession();
+  const membership = await requireWorkspaceMember(session.user.id, workspaceId);
 
+  if (membership.role === "MEMBER") {
+    throw new Error("Only OWNER or ADMIN can invite members.");
+  }
+
+  const targetEmail = email.trim().toLowerCase();
   const targetUser = await prisma.user.findUnique({
-    where: { email: email.trim().toLowerCase() },
+    where: { email: targetEmail },
   });
 
+  // Jika user belum mendaftar, buat token di tabel Invitation
   if (!targetUser) {
-    throw new Error("User dengan email tersebut belum terdaftar di aplikasi.");
+    const token = randomBytes(24).toString("hex");
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+    return await prisma.invitation.upsert({
+      where: { email_workspaceId: { email: targetEmail, workspaceId } },
+      create: { email: targetEmail, workspaceId, token, expiresAt },
+      update: { token, expiresAt },
+    });
   }
 
   const existing = await prisma.membership.findUnique({
@@ -276,7 +381,7 @@ export async function addMemberByEmailAction(workspaceId: string, email: string)
   });
 
   if (existing) {
-    throw new Error("User ini sudah menjadi member di workspace.");
+    throw new Error("User is already a member of this workspace.");
   }
 
   return await prisma.membership.create({
@@ -293,10 +398,9 @@ export async function addMemberByEmailAction(workspaceId: string, email: string)
   });
 }
 
-// 2. Ambil Daftar Member Asli
 export async function getWorkspaceMembersAction(workspaceId: string) {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) throw new Error("Unauthorized");
+  const session = await requireAuthSession();
+  await requireWorkspaceMember(session.user.id, workspaceId);
 
   return await prisma.membership.findMany({
     where: { workspaceId },
@@ -309,10 +413,13 @@ export async function getWorkspaceMembersAction(workspaceId: string) {
   });
 }
 
-// 3. Ambil Pesan Asli Workspace
+/* =========================================================
+   Workspace Messages & Chat Operations
+   ========================================================= */
+
 export async function getWorkspaceMessagesAction(workspaceId: string) {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) throw new Error("Unauthorized");
+  const session = await requireAuthSession();
+  await requireWorkspaceMember(session.user.id, workspaceId);
 
   return await prisma.message.findMany({
     where: { workspaceId },
@@ -325,10 +432,9 @@ export async function getWorkspaceMessagesAction(workspaceId: string) {
   });
 }
 
-// 4. Kirim Pesan Asli ke Workspace
 export async function sendMessageAction(workspaceId: string, content: string) {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) throw new Error("Unauthorized");
+  const session = await requireAuthSession();
+  await requireWorkspaceMember(session.user.id, workspaceId);
 
   if (!content.trim()) throw new Error("Content cannot be empty");
 
@@ -346,10 +452,13 @@ export async function sendMessageAction(workspaceId: string, content: string) {
   });
 }
 
-// 5. Ambil Aktivitas Asli
+/* =========================================================
+   Workspace Activities & Audit Logs
+   ========================================================= */
+
 export async function getWorkspaceActivitiesAction(workspaceId: string) {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) throw new Error("Unauthorized");
+  const session = await requireAuthSession();
+  await requireWorkspaceMember(session.user.id, workspaceId);
 
   return await prisma.activity.findMany({
     where: { workspaceId },
@@ -363,15 +472,14 @@ export async function getWorkspaceActivitiesAction(workspaceId: string) {
   });
 }
 
-// 6. Log Aktivitas Asli
 export async function logActivityAction(data: {
   workspaceId: string;
   action: string;
   targetItem: string;
   project: string;
 }) {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) throw new Error("Unauthorized");
+  const session = await requireAuthSession();
+  await requireWorkspaceMember(session.user.id, data.workspaceId);
 
   return await prisma.activity.create({
     data: {

@@ -105,6 +105,7 @@ model Workspace {
   projects    Project[]
   messages    Message[]
   activities  Activity[]
+  invitations Invitation[]
 }
 
 model Membership {
@@ -118,6 +119,21 @@ model Membership {
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@unique([userId, workspaceId])
+  @@index([workspaceId])
+}
+
+model Invitation {
+  id          String        @id @default(cuid())
+  email       String
+  workspaceId String
+  role        WorkspaceRole @default(MEMBER)
+  token       String        @unique
+  expiresAt   DateTime
+  createdAt   DateTime      @default(now())
+
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([email, workspaceId])
   @@index([workspaceId])
 }
 
