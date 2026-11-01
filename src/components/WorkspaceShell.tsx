@@ -10,6 +10,7 @@ import {
   createProjectAction,
   addMemberByEmailAction,
   createWorkspaceAction,
+  createCheckoutSessionAction,
 } from "@/app/actions";
 
 type ProjectType = {
@@ -180,6 +181,7 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
   const [dark, setDark] = useState(true);
   const [workspaceId, setWorkspaceId] = useState<string>("");
   const [workspaceName, setWorkspaceName] = useState<string>("Orbit Workspace");
+  const [subscriptionPlan, setSubscriptionPlan] = useState<string>("FREE");
   const [userWorkspaces, setUserWorkspaces] = useState<UserWorkspaceItem[]>([]);
   const [showWorkspaceSwitcher, setShowWorkspaceSwitcher] = useState(false);
 
@@ -205,6 +207,7 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
   const [newWorkspaceNameInput, setNewWorkspaceNameInput] = useState("");
   const [newProjectNameInput, setNewProjectNameInput] = useState("");
   const [newProjectDescInput, setNewProjectDescInput] = useState("");
+  const [upgrading, setUpgrading] = useState(false);
 
   const activeProjectId = searchParams.get("id");
   const isOverviewPage = pathname.startsWith("/overview");
@@ -223,6 +226,8 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
           if (res?.workspace) {
             setWorkspaceId(res.workspace.id);
             setWorkspaceName(res.workspace.name);
+            setSubscriptionPlan(res.workspace.subscription?.plan || "FREE");
+
             if (res.userWorkspaces) {
               setUserWorkspaces(res.userWorkspaces);
             }
@@ -298,6 +303,7 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
     if (res?.workspace) {
       setWorkspaceId(res.workspace.id);
       setWorkspaceName(res.workspace.name);
+      setSubscriptionPlan(res.workspace.subscription?.plan || "FREE");
       router.refresh();
     }
   }
@@ -338,8 +344,9 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
       setNewProjectNameInput("");
       setNewProjectDescInput("");
       router.push(`/projects?id=${created.id}`);
-    } catch (error) {
-      console.error("Gagal membuat project:", error);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : "Failed to create project";
+      alert(msg);
     }
   }
 
@@ -361,6 +368,22 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : "Failed to invite member";
       setInviteStatusMsg(`Error: ${errorMessage}`);
+    }
+  }
+
+  async function handleUpgradeToPro() {
+    if (!workspaceId) return;
+    try {
+      setUpgrading(true);
+      const res = await createCheckoutSessionAction(workspaceId);
+      if (res?.url) {
+        window.location.href = res.url;
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to start checkout session";
+      alert(msg);
+    } finally {
+      setUpgrading(false);
     }
   }
 
@@ -449,10 +472,15 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
                   WORKSPACE <Icon name="chevron" size={10} />
                 </span>
                 <h2
-                  className="cursor-pointer font-bold truncate"
+                  className="cursor-pointer font-bold truncate flex items-center gap-2"
                   onClick={() => setShowWorkspaceSwitcher(!showWorkspaceSwitcher)}
                 >
                   {workspaceName}
+                  {subscriptionPlan === "PRO" && (
+                    <span className="text-[10px] bg-gradient-to-r from-violet-500 to-indigo-500 text-white px-1.5 py-0.5 rounded-md font-semibold">
+                      PRO
+                    </span>
+                  )}
                 </h2>
 
                 {/* WORKSPACE SWITCHER DROPDOWN */}
@@ -735,7 +763,9 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
                 />
                 <div className="min-w-0 flex-1">
                   <strong className="truncate">{userName}</strong>
-                  <small className="truncate block">{userEmail || "Free workspace"}</small>
+                  <small className="truncate block">
+                    {userEmail || `${subscriptionPlan} plan`}
+                  </small>
                 </div>
                 <button
                   className="icon-button cursor-pointer"
@@ -799,13 +829,27 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
                 {showProfileMenu && (
                   <>
                     <div className="fixed inset-0 z-20" onClick={() => setShowProfileMenu(false)} />
-                    <div className="absolute right-0 top-10 z-30 w-48 rounded-xl border border-[var(--line)] bg-[var(--card)] p-2 shadow-2xl text-xs text-white space-y-1">
+                    <div className="absolute right-0 top-10 z-30 w-52 rounded-xl border border-[var(--line)] bg-[var(--card)] p-2 shadow-2xl text-xs text-white space-y-1">
                       <div className="px-3 py-2 border-b border-[var(--line)]">
                         <strong className="block truncate font-semibold">{userName}</strong>
                         <span className="text-[10px] text-gray-400 block truncate">
-                          {userEmail || "Free workspace"}
+                          {userEmail}
+                        </span>
+                        <span className="inline-block mt-1 text-[9px] bg-[#35383a] text-[#98E499] px-2 py-0.5 rounded-full font-bold">
+                          {subscriptionPlan} PLAN
                         </span>
                       </div>
+
+                      {subscriptionPlan === "FREE" && (
+                        <button
+                          onClick={handleUpgradeToPro}
+                          disabled={upgrading}
+                          className="w-full text-left px-3 py-2 rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 text-white font-semibold hover:opacity-90 transition cursor-pointer flex items-center gap-2"
+                        >
+                          <Icon name="zap" size={14} /> {upgrading ? "Redirecting..." : "Upgrade to Pro"}
+                        </button>
+                      )}
+
                       <button
                         onClick={() => {
                           setShowProfileMenu(false);
@@ -942,7 +986,19 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 pt-3 border-t border-[var(--line)]">
+            <div className="flex justify-between items-center pt-3 border-t border-[var(--line)]">
+              {subscriptionPlan === "FREE" ? (
+                <button
+                  type="button"
+                  onClick={handleUpgradeToPro}
+                  disabled={upgrading}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-black bg-[#98E499] hover:bg-[#85d886] transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <Icon name="zap" size={14} /> {upgrading ? "Redirecting..." : "Upgrade Storage"}
+                </button>
+              ) : (
+                <span className="text-xs text-[#98E499] font-medium">Pro Unlimited Storage</span>
+              )}
               <button
                 type="button"
                 onClick={() => setShowStorageModal(false)}
