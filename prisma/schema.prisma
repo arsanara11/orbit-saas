@@ -27,6 +27,19 @@ enum TaskPriority {
   URGENT
 }
 
+enum SubscriptionPlan {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  INCOMPLETE
+}
+
 model User {
   id            String    @id @default(cuid())
   name          String
@@ -100,12 +113,13 @@ model Workspace {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  owner       User         @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Restrict)
-  memberships Membership[]
-  projects    Project[]
-  messages    Message[]
-  activities  Activity[]
-  invitations Invitation[]
+  owner        User          @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  memberships  Membership[]
+  projects     Project[]
+  messages     Message[]
+  activities   Activity[]
+  invitations  Invitation[]
+  subscription Subscription?
 }
 
 model Membership {
@@ -131,10 +145,24 @@ model Invitation {
   expiresAt   DateTime
   createdAt   DateTime      @default(now())
 
-  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@unique([email, workspaceId])
   @@index([workspaceId])
+}
+
+model Subscription {
+  id                   String             @id @default(cuid())
+  workspaceId          String             @unique
+  plan                 SubscriptionPlan   @default(FREE)
+  status               SubscriptionStatus @default(ACTIVE)
+  stripeCustomerId     String?            @unique
+  stripeSubscriptionId String?            @unique
+  currentPeriodEnd     DateTime?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 }
 
 model Project {

@@ -4,9 +4,13 @@ import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { randomBytes } from "crypto";
+import Stripe from "stripe";
 
 type TaskStatusType = "TODO" | "IN_PROGRESS" | "IN_REVIEW" | "DONE";
 type TaskPriorityType = "LOW" | "MEDIUM" | "HIGH" | "URGENT";
+
+// Inisialisasi Stripe tanpa apiVersion untuk menghindari error type version mismatch
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "");
 
 const defaultProjects = [
   {
@@ -56,11 +60,36 @@ async function requireWorkspaceMember(userId: string, workspaceId: string) {
   const membership = await prisma.membership.findUnique({
     where: { userId_workspaceId: { userId, workspaceId } },
   });
-  if (!membership) throw new Error("Forbidden: Access denied to this workspace");
+  if (!membership) throw new Error("Forbidden: Access denied to workspace");
   return membership;
 }
 
+export async function checkWorkspaceLimit(workspaceId: string, type: "PROJECT" | "MEMBER") {
+  const subscription = await prisma.subscription.findUnique({
+    where: { workspaceId },
+  });
+
+  const plan = subscription?.plan || "FREE";
+
+  if (plan === "FREE") {
+    if (type === "PROJECT") {
+      const projectCount = await prisma.project.count({ where: { workspaceId } });
+      if (projectCount >= 3) {
+        throw new Error("Free plan is limited to 3 projects. Please upgrade to Pro!");
+      }
+    }
+
+    if (type === "MEMBER") {
+      const memberCount = await prisma.membership.count({ where: { workspaceId } });
+      if (memberCount >= 5) {
+        throw new Error("Free plan is limited to 5 members. Please upgrade to Pro!");
+      }
+    }
+  }
+}
+
 const workspaceInclude = {
+  subscription: true,
   projects: {
     include: { tasks: { orderBy: { createdAt: "asc" as const } } },
     orderBy: { createdAt: "asc" as const },
@@ -92,10 +121,6 @@ const workspaceInclude = {
   },
 };
 
-/* =========================================================
-   Workspace Data & Multi-Tenancy Core
-   ========================================================= */
-
 export async function getInitialWorkspaceData(targetWorkspaceId?: string) {
   const session = await requireAuthSession();
   let workspace = null;
@@ -122,12 +147,12 @@ export async function getInitialWorkspaceData(targetWorkspaceId?: string) {
         slug: `workspace-${Date.now()}`,
         ownerId: session.user.id,
         memberships: { create: { userId: session.user.id, role: "OWNER" } },
+        subscription: { create: { plan: "FREE", status: "ACTIVE" } },
       },
       include: workspaceInclude,
     });
   }
 
-  // Auto-seed projek default jika projek di workspace kurang dari 4
   if (workspace.projects.length < 4) {
     for (const projData of defaultProjects) {
       const exists = workspace.projects.some((p) => p.name === projData.name);
@@ -183,13 +208,10 @@ export async function createWorkspaceAction(name: string) {
       slug,
       ownerId: session.user.id,
       memberships: { create: { userId: session.user.id, role: "OWNER" } },
+      subscription: { create: { plan: "FREE", status: "ACTIVE" } },
     },
   });
 }
-
-/* =========================================================
-   Project & Task Operations
-   ========================================================= */
 
 export async function createProjectAction(name: string, workspaceId?: string) {
   const session = await requireAuthSession();
@@ -206,6 +228,7 @@ export async function createProjectAction(name: string, workspaceId?: string) {
   }
 
   await requireWorkspaceMember(session.user.id, targetWorkspaceId);
+  await checkWorkspaceLimit(targetWorkspaceId, "PROJECT");
 
   return await prisma.project.create({
     data: {
@@ -342,10 +365,6 @@ export async function deleteTaskAction(taskId: string) {
   return await prisma.task.delete({ where: { id: taskId } });
 }
 
-/* =========================================================
-   Real Multi-User & Membership Operations
-   ========================================================= */
-
 export async function addMemberByEmailAction(workspaceId: string, email: string) {
   const session = await requireAuthSession();
   const membership = await requireWorkspaceMember(session.user.id, workspaceId);
@@ -354,12 +373,13 @@ export async function addMemberByEmailAction(workspaceId: string, email: string)
     throw new Error("Only OWNER or ADMIN can invite members.");
   }
 
+  await checkWorkspaceLimit(workspaceId, "MEMBER");
+
   const targetEmail = email.trim().toLowerCase();
   const targetUser = await prisma.user.findUnique({
     where: { email: targetEmail },
   });
 
-  // Jika user belum mendaftar, buat token di tabel Invitation
   if (!targetUser) {
     const token = randomBytes(24).toString("hex");
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
@@ -398,6 +418,60 @@ export async function addMemberByEmailAction(workspaceId: string, email: string)
   });
 }
 
+export async function acceptInvitationAction(token: string) {
+  const session = await requireAuthSession();
+
+  const invitation = await prisma.invitation.findUnique({
+    where: { token },
+  });
+
+  if (!invitation) throw new Error("Invitation link not found or expired.");
+  if (invitation.expiresAt < new Date()) throw new Error("Invitation link has expired.");
+
+  await checkWorkspaceLimit(invitation.workspaceId, "MEMBER");
+
+  const membership = await prisma.membership.create({
+    data: {
+      workspaceId: invitation.workspaceId,
+      userId: session.user.id,
+      role: invitation.role,
+    },
+  });
+
+  await prisma.invitation.delete({ where: { id: invitation.id } });
+
+  return membership;
+}
+
+export async function updateMemberRoleAction(
+  workspaceId: string,
+  memberId: string,
+  newRole: "ADMIN" | "MEMBER"
+) {
+  const session = await requireAuthSession();
+  const currentMembership = await requireWorkspaceMember(session.user.id, workspaceId);
+
+  if (currentMembership.role !== "OWNER") {
+    throw new Error("Only OWNER can update member roles.");
+  }
+
+  return await prisma.membership.update({
+    where: { id: memberId },
+    data: { role: newRole },
+  });
+}
+
+export async function removeMemberAction(workspaceId: string, memberId: string) {
+  const session = await requireAuthSession();
+  const currentMembership = await requireWorkspaceMember(session.user.id, workspaceId);
+
+  if (currentMembership.role === "MEMBER") {
+    throw new Error("Only OWNER or ADMIN can remove members.");
+  }
+
+  return await prisma.membership.delete({ where: { id: memberId } });
+}
+
 export async function getWorkspaceMembersAction(workspaceId: string) {
   const session = await requireAuthSession();
   await requireWorkspaceMember(session.user.id, workspaceId);
@@ -412,10 +486,6 @@ export async function getWorkspaceMembersAction(workspaceId: string) {
     orderBy: { joinedAt: "asc" },
   });
 }
-
-/* =========================================================
-   Workspace Messages & Chat Operations
-   ========================================================= */
 
 export async function getWorkspaceMessagesAction(workspaceId: string) {
   const session = await requireAuthSession();
@@ -451,10 +521,6 @@ export async function sendMessageAction(workspaceId: string, content: string) {
     },
   });
 }
-
-/* =========================================================
-   Workspace Activities & Audit Logs
-   ========================================================= */
 
 export async function getWorkspaceActivitiesAction(workspaceId: string) {
   const session = await requireAuthSession();
@@ -495,4 +561,25 @@ export async function logActivityAction(data: {
       },
     },
   });
+}
+
+export async function createCheckoutSessionAction(workspaceId: string) {
+  const session = await requireAuthSession();
+  await requireWorkspaceMember(session.user.id, workspaceId);
+
+  const checkoutSession = await stripe.checkout.sessions.create({
+    mode: "subscription",
+    customer_email: session.user.email,
+    line_items: [
+      {
+        price: process.env.STRIPE_PRO_PRICE_ID,
+        quantity: 1,
+      },
+    ],
+    metadata: { workspaceId },
+    success_url: `${process.env.NEXT_PUBLIC_APP_URL}/overview?billing=success`,
+    cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/overview?billing=canceled`,
+  });
+
+  return { url: checkoutSession.url };
 }
