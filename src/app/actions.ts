@@ -583,3 +583,23 @@ export async function createCheckoutSessionAction(workspaceId: string) {
 
   return { url: checkoutSession.url };
 }
+
+export async function createCustomerPortalAction(workspaceId: string) {
+  const session = await requireAuthSession();
+  await requireWorkspaceMember(session.user.id, workspaceId);
+
+  const subscription = await prisma.subscription.findUnique({
+    where: { workspaceId },
+  });
+
+  if (!subscription?.stripeCustomerId) {
+    throw new Error("No active billing profile found for this workspace.");
+  }
+
+  const portalSession = await stripe.billingPortal.sessions.create({
+    customer: subscription.stripeCustomerId,
+    return_url: `${process.env.NEXT_PUBLIC_APP_URL}/overview`,
+  });
+
+  return { url: portalSession.url };
+}
