@@ -11,6 +11,7 @@ import {
   addMemberByEmailAction,
   createWorkspaceAction,
   createCheckoutSessionAction,
+  createCustomerPortalAction,
 } from "@/app/actions";
 
 type ProjectType = {
@@ -381,6 +382,22 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to start checkout session";
+      alert(msg);
+    } finally {
+      setUpgrading(false);
+    }
+  }
+
+  async function handleManageSubscription() {
+    if (!workspaceId) return;
+    try {
+      setUpgrading(true);
+      const res = await createCustomerPortalAction(workspaceId);
+      if (res?.url) {
+        window.location.href = res.url;
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to open billing portal";
       alert(msg);
     } finally {
       setUpgrading(false);
@@ -840,13 +857,21 @@ export default function WorkspaceShell({ children }: { children: React.ReactNode
                         </span>
                       </div>
 
-                      {subscriptionPlan === "FREE" && (
+                      {subscriptionPlan === "FREE" ? (
                         <button
                           onClick={handleUpgradeToPro}
                           disabled={upgrading}
                           className="w-full text-left px-3 py-2 rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 text-white font-semibold hover:opacity-90 transition cursor-pointer flex items-center gap-2"
                         >
                           <Icon name="zap" size={14} /> {upgrading ? "Redirecting..." : "Upgrade to Pro"}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={handleManageSubscription}
+                          disabled={upgrading}
+                          className="w-full text-left px-3 py-2 rounded-lg bg-[#35383a] text-white font-semibold hover:bg-[#424548] transition cursor-pointer flex items-center gap-2"
+                        >
+                          <Icon name="settings" size={14} /> {upgrading ? "Redirecting..." : "Manage Subscription"}
                         </button>
                       )}
 
