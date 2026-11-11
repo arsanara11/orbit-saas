@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import WorkspaceShell from "@/components/WorkspaceShell";
 import { useWorkspace } from "@/context/WorkspaceContext";
+import { getInitialWorkspaceData } from "@/app/actions";
 
 type ActivityCategory = "All activity" | "Tasks" | "Projects" | "Members";
 type DateRangeOption = "All time" | "Today" | "Last 7 days" | "Last 30 days";
@@ -35,117 +36,41 @@ type ActivityItem = {
   isDeletedTarget?: boolean;
 };
 
-const INITIAL_ACTIVITIES: ActivityItem[] = [
-  {
-    id: "act-101",
-    actor: { name: "Anisa Nabila", avatarInitials: "AN", role: "Project Lead" },
-    action: "completed a task",
-    targetItem: "Finalize dashboard layout",
-    targetType: "task",
-    project: "Orbit Workspace",
-    projectId: "proj-1",
-    timestamp: "10:42 AM",
-    exactTime: "Today at 10:42:15 AM",
-    dateGroup: "TODAY",
-    rawDate: new Date(),
-    iconType: "check",
-    changes: [
-      { field: "Status", oldValue: "In Progress", newValue: "Completed / In Review" },
-      { field: "Progress", oldValue: "80%", newValue: "100%" },
-    ],
-  },
-  {
-    id: "act-102",
-    actor: { name: "Ahmad Rizky", avatarInitials: "AR", role: "Frontend Developer" },
-    action: "updated task priority",
-    targetItem: "API integration",
-    targetType: "task",
-    project: "Website Redesign",
-    projectId: "proj-2",
-    timestamp: "09:15 AM",
-    exactTime: "Today at 09:15:02 AM",
-    dateGroup: "TODAY",
-    rawDate: new Date(),
-    iconType: "edit",
-    changes: [
-      { field: "Priority", oldValue: "Medium", newValue: "High" },
-    ],
-  },
-  {
-    id: "act-103",
-    actor: { name: "Anisa Nabila", avatarInitials: "AN", role: "Project Lead" },
-    action: "created a new project",
-    targetItem: "Mobile App Redesign",
-    targetType: "project",
-    project: "Mobile App Redesign",
-    projectId: "proj-3",
-    timestamp: "08:30 AM",
-    exactTime: "Today at 08:30:00 AM",
-    dateGroup: "TODAY",
-    rawDate: new Date(),
-    iconType: "folder",
-  },
-  {
-    id: "act-104",
-    actor: { name: "M. Kenzie", avatarInitials: "MK", role: "UI/UX Designer" },
-    action: "updated a task deadline",
-    targetItem: "Prepare project documentation",
-    targetType: "task",
-    project: "Orbit Workspace",
-    projectId: "proj-1",
-    timestamp: "Yesterday, 04:20 PM",
-    exactTime: "Oct 25, 2026 at 04:20:11 PM",
-    dateGroup: "YESTERDAY",
-    rawDate: new Date(Date.now() - 86400000),
-    iconType: "clock",
-    changes: [
-      { field: "Due Date", oldValue: "Oct 24, 2026", newValue: "Oct 30, 2026" },
-    ],
-  },
-  {
-    id: "act-105",
-    actor: { name: "Jasmine L.", avatarInitials: "JL", role: "Backend Developer" },
-    action: "joined the workspace team",
-    targetItem: "Backend Developer Role",
-    targetType: "member",
-    project: "Orbit Workspace",
-    projectId: "proj-1",
-    timestamp: "Yesterday, 02:15 PM",
-    exactTime: "Oct 25, 2026 at 02:15:40 PM",
-    dateGroup: "YESTERDAY",
-    rawDate: new Date(Date.now() - 86400000),
-    iconType: "user",
-  },
-  {
-    id: "act-106",
-    actor: { name: "Ahmad Rizky", avatarInitials: "AR", role: "Frontend Developer" },
-    action: "deleted a legacy task",
-    targetItem: "Deprecated Auth Middleware",
-    targetType: "task",
-    project: "Website Redesign",
-    projectId: "proj-2",
-    timestamp: "Oct 23, 11:00 AM",
-    exactTime: "Oct 23, 2026 at 11:00:00 AM",
-    dateGroup: "LAST 7 DAYS",
-    rawDate: new Date(Date.now() - 86400000 * 3),
-    iconType: "trash",
-    isDeletedTarget: true,
-  },
-  {
-    id: "act-107",
-    actor: { name: "M. Kenzie", avatarInitials: "MK", role: "UI/UX Designer" },
-    action: "created a new task",
-    targetItem: "Design System Tokens Migration",
-    targetType: "task",
-    project: "Orbit Workspace",
-    projectId: "proj-1",
-    timestamp: "Oct 22, 03:45 PM",
-    exactTime: "Oct 22, 2026 at 03:45:10 PM",
-    dateGroup: "LAST 7 DAYS",
-    rawDate: new Date(Date.now() - 86400000 * 4),
-    iconType: "plus",
-  },
-];
+// Helper untuk mengelompokkan tanggal riwayat aktivitas
+function getDateGroup(date: Date): "TODAY" | "YESTERDAY" | "LAST 7 DAYS" | "EARLIER" {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const itemDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const diffDays = Math.floor((today.getTime() - itemDate.getTime()) / (1000 * 60 * 60 * 24));
+
+  if (diffDays <= 0) return "TODAY";
+  if (diffDays === 1) return "YESTERDAY";
+  if (diffDays <= 7) return "LAST 7 DAYS";
+  return "EARLIER";
+}
+
+// Helper ikon berdasarkan tipe aksi
+function getIconType(action: string, targetType: string): "check" | "edit" | "plus" | "folder" | "user" | "clock" | "trash" {
+  const actLower = action.toLowerCase();
+  if (actLower.includes("complete") || actLower.includes("done")) return "check";
+  if (actLower.includes("delete") || actLower.includes("remove")) return "trash";
+  if (actLower.includes("create") || actLower.includes("add")) {
+    return targetType === "project" ? "folder" : targetType === "member" ? "user" : "plus";
+  }
+  if (actLower.includes("join") || actLower.includes("invite") || targetType === "member") return "user";
+  if (actLower.includes("deadline") || actLower.includes("date")) return "clock";
+  if (targetType === "project") return "folder";
+  return "edit";
+}
+
+function getInitials(name?: string) {
+  if (!name) return "US";
+  const parts = name.trim().split(" ");
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+  return name.slice(0, 2).toUpperCase();
+}
 
 function Icon({ name, size = 14 }: { name: string; size?: number }) {
   const common = {
@@ -212,6 +137,7 @@ export default function ActivityPage() {
   const router = useRouter();
   const { activities: globalActivities } = useWorkspace();
 
+  const [dbActivities, setDbActivities] = useState<ActivityItem[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<ActivityCategory>("All activity");
   const [selectedDateRange, setSelectedDateRange] = useState<DateRangeOption>("All time");
   const [selectedActor, setSelectedActor] = useState<string>("All actors");
@@ -220,17 +146,55 @@ export default function ActivityPage() {
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
 
   const [activeDetailItem, setActiveDetailItem] = useState<ActivityItem | null>(null);
-  const [visibleCount, setVisibleCount] = useState(5);
+  const [visibleCount, setVisibleCount] = useState(10);
   const [isLoading, setIsLoading] = useState(true);
 
+  // Synchronize data dari database PostgreSQL
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setIsLoading(false);
-    }, 200);
-    return () => clearTimeout(timer);
+    setIsLoading(true);
+    getInitialWorkspaceData()
+      .then((res) => {
+        if (res?.workspace) {
+          const wsName = res.workspace.name || "Orbit Workspace";
+          if (res.workspace.activities && res.workspace.activities.length > 0) {
+            const formatted: ActivityItem[] = res.workspace.activities.map((act: any) => {
+              const rDate = new Date(act.createdAt);
+              const actorName = act.user?.name || "Workspace Member";
+              const initials = getInitials(actorName);
+              const tType: "task" | "project" | "member" =
+                act.type?.toLowerCase().includes("project")
+                  ? "project"
+                  : act.type?.toLowerCase().includes("member")
+                  ? "member"
+                  : "task";
+
+              return {
+                id: act.id,
+                actor: {
+                  name: actorName,
+                  avatarInitials: initials,
+                  role: "Member",
+                },
+                action: act.action,
+                targetItem: act.target,
+                targetType: tType,
+                project: wsName,
+                timestamp: rDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+                exactTime: rDate.toLocaleString([], { dateStyle: "medium", timeStyle: "medium" }),
+                dateGroup: getDateGroup(rDate),
+                rawDate: rDate,
+                iconType: getIconType(act.action, tType),
+              };
+            });
+            setDbActivities(formatted);
+          }
+        }
+      })
+      .catch(console.error)
+      .finally(() => setIsLoading(false));
   }, []);
 
-  // Adaptasi data dari WorkspaceContext agar seragam dengan ActivityItem
+  // Gabungkan aktivitas dari database real dan context
   const combinedActivities = useMemo(() => {
     const contextItems: ActivityItem[] = globalActivities.map((act) => ({
       id: act.id,
@@ -255,9 +219,20 @@ export default function ActivityPage() {
     }));
 
     const contextIds = new Set(contextItems.map((a) => a.id));
-    const remainingInitial = INITIAL_ACTIVITIES.filter((a) => !contextIds.has(a.id));
-    return [...contextItems, ...remainingInitial];
-  }, [globalActivities]);
+    const dbFiltered = dbActivities.filter((a) => !contextIds.has(a.id));
+    return [...contextItems, ...dbFiltered];
+  }, [globalActivities, dbActivities]);
+
+  // Daftar Actor dan Project dinamis dari data asli
+  const actorOptions = useMemo(() => {
+    const actors = Array.from(new Set(combinedActivities.map((a) => a.actor.name)));
+    return ["All actors", ...actors];
+  }, [combinedActivities]);
+
+  const projectOptions = useMemo(() => {
+    const projects = Array.from(new Set(combinedActivities.map((a) => a.project)));
+    return ["All projects", ...projects];
+  }, [combinedActivities]);
 
   const filteredActivities = useMemo(() => {
     return combinedActivities.filter((act) => {
@@ -431,12 +406,11 @@ export default function ActivityPage() {
                   onChange={(e) => setSelectedActor(e.target.value)}
                   className="w-full rounded-xl border border-[var(--line)] bg-[var(--card)] px-3 py-1.5 text-xs text-white focus:outline-none focus:border-[#98E499]"
                 >
-                  <option value="All actors">All actors</option>
-                  <option value="Anisa Nabila">Anisa Nabila</option>
-                  <option value="Nabila Sabrina">Nabila Sabrina</option>
-                  <option value="Ahmad Rizky">Ahmad Rizky</option>
-                  <option value="M. Kenzie">M. Kenzie</option>
-                  <option value="Jasmine L.">Jasmine L.</option>
+                  {actorOptions.map((actor) => (
+                    <option key={actor} value={actor}>
+                      {actor}
+                    </option>
+                  ))}
                 </select>
               </div>
 
@@ -447,10 +421,11 @@ export default function ActivityPage() {
                   onChange={(e) => setSelectedProject(e.target.value)}
                   className="w-full rounded-xl border border-[var(--line)] bg-[var(--card)] px-3 py-1.5 text-xs text-white focus:outline-none focus:border-[#98E499]"
                 >
-                  <option value="All projects">All projects</option>
-                  <option value="Orbit Workspace">Orbit Workspace</option>
-                  <option value="Website Redesign">Website Redesign</option>
-                  <option value="Mobile App Redesign">Mobile App Redesign</option>
+                  {projectOptions.map((proj) => (
+                    <option key={proj} value={proj}>
+                      {proj}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>

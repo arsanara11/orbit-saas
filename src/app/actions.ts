@@ -9,7 +9,7 @@ import Stripe from "stripe";
 type TaskStatusType = "TODO" | "IN_PROGRESS" | "IN_REVIEW" | "DONE";
 type TaskPriorityType = "LOW" | "MEDIUM" | "HIGH" | "URGENT";
 
-// Inisialisasi Stripe tanpa apiVersion untuk menghindari error type version mismatch
+// Inisialisasi Stripe
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "");
 
 const defaultProjects = [
@@ -62,6 +62,35 @@ async function requireWorkspaceMember(userId: string, workspaceId: string) {
   });
   if (!membership) throw new Error("Forbidden: Access denied to workspace");
   return membership;
+}
+
+// Helper Internal untuk Auto-Log Aktivitas ke Database
+async function internalLogActivity({
+  workspaceId,
+  userId,
+  action,
+  targetItem,
+  project,
+}: {
+  workspaceId: string;
+  userId: string;
+  action: string;
+  targetItem: string;
+  project?: string;
+}) {
+  try {
+    await prisma.activity.create({
+      data: {
+        workspaceId,
+        userId,
+        action,
+        targetItem,
+        project: project || "Orbit Workspace",
+      },
+    });
+  } catch (err) {
+    console.error("Auto activity log failed:", err);
+  }
 }
 
 export async function checkWorkspaceLimit(workspaceId: string, type: "PROJECT" | "MEMBER") {
@@ -117,7 +146,7 @@ const workspaceInclude = {
       },
     },
     orderBy: { createdAt: "desc" as const },
-    take: 20,
+    take: 50,
   },
 };
 
@@ -202,7 +231,7 @@ export async function createWorkspaceAction(name: string) {
   const session = await requireAuthSession();
   const slug = `${name.toLowerCase().replace(/[^a-z0-9]/g, "-")}-${Date.now()}`;
 
-  return await prisma.workspace.create({
+  const ws = await prisma.workspace.create({
     data: {
       name: name.trim(),
       slug,
@@ -211,6 +240,16 @@ export async function createWorkspaceAction(name: string) {
       subscription: { create: { plan: "FREE", status: "ACTIVE" } },
     },
   });
+
+  await internalLogActivity({
+    workspaceId: ws.id,
+    userId: session.user.id,
+    action: "created a new workspace",
+    targetItem: ws.name,
+    project: ws.name,
+  });
+
+  return ws;
 }
 
 export async function createProjectAction(name: string, workspaceId?: string) {
@@ -230,7 +269,7 @@ export async function createProjectAction(name: string, workspaceId?: string) {
   await requireWorkspaceMember(session.user.id, targetWorkspaceId);
   await checkWorkspaceLimit(targetWorkspaceId, "PROJECT");
 
-  return await prisma.project.create({
+  const newProject = await prisma.project.create({
     data: {
       name: name.trim(),
       description: "Plan, collaborate, and ship great work together.",
@@ -238,6 +277,16 @@ export async function createProjectAction(name: string, workspaceId?: string) {
     },
     include: { tasks: { orderBy: { createdAt: "asc" } } },
   });
+
+  await internalLogActivity({
+    workspaceId: targetWorkspaceId,
+    userId: session.user.id,
+    action: "created a new project",
+    targetItem: newProject.name,
+    project: newProject.name,
+  });
+
+  return newProject;
 }
 
 export async function updateProjectNameAction(projectId: string, newName: string) {
@@ -245,16 +294,26 @@ export async function updateProjectNameAction(projectId: string, newName: string
 
   const project = await prisma.project.findUnique({
     where: { id: projectId },
-    select: { workspaceId: true },
+    select: { workspaceId: true, name: true },
   });
   if (!project) throw new Error("Project not found");
 
   await requireWorkspaceMember(session.user.id, project.workspaceId);
 
-  return await prisma.project.update({
+  const updated = await prisma.project.update({
     where: { id: projectId },
     data: { name: newName.trim() },
   });
+
+  await internalLogActivity({
+    workspaceId: project.workspaceId,
+    userId: session.user.id,
+    action: "updated project name",
+    targetItem: updated.name,
+    project: updated.name,
+  });
+
+  return updated;
 }
 
 export async function getProjectTasksAction(projectId: string) {
@@ -281,7 +340,7 @@ export async function createTaskAction(data: {
 
   const project = await prisma.project.findUnique({
     where: { id: data.projectId },
-    select: { workspaceId: true },
+    select: { workspaceId: true, name: true },
   });
   if (!project) throw new Error("Project not found");
 
@@ -291,7 +350,7 @@ export async function createTaskAction(data: {
     ? session.user.name.slice(0, 2).toUpperCase()
     : "US";
 
-  return await prisma.task.create({
+  const newTask = await prisma.task.create({
     data: {
       title: data.title.trim(),
       description: "Add a description to keep the team aligned on next steps.",
@@ -302,6 +361,16 @@ export async function createTaskAction(data: {
       people: [userInitials],
     },
   });
+
+  await internalLogActivity({
+    workspaceId: project.workspaceId,
+    userId: session.user.id,
+    action: "created a new task",
+    targetItem: newTask.title,
+    project: project.name || "Orbit Workspace",
+  });
+
+  return newTask;
 }
 
 export async function updateTaskStatusAction(taskId: string, newStatus: TaskStatusType) {
@@ -309,16 +378,26 @@ export async function updateTaskStatusAction(taskId: string, newStatus: TaskStat
 
   const task = await prisma.task.findUnique({
     where: { id: taskId },
-    include: { project: { select: { workspaceId: true } } },
+    include: { project: { select: { workspaceId: true, name: true } } },
   });
   if (!task) throw new Error("Task not found");
 
   await requireWorkspaceMember(session.user.id, task.project.workspaceId);
 
-  return await prisma.task.update({
+  const updatedTask = await prisma.task.update({
     where: { id: taskId },
     data: { status: newStatus },
   });
+
+  await internalLogActivity({
+    workspaceId: task.project.workspaceId,
+    userId: session.user.id,
+    action: newStatus === "DONE" ? "completed a task" : "updated task status",
+    targetItem: updatedTask.title,
+    project: task.project.name || "Orbit Workspace",
+  });
+
+  return updatedTask;
 }
 
 export async function updateTaskAction(
@@ -334,13 +413,13 @@ export async function updateTaskAction(
 
   const task = await prisma.task.findUnique({
     where: { id: taskId },
-    include: { project: { select: { workspaceId: true } } },
+    include: { project: { select: { workspaceId: true, name: true } } },
   });
   if (!task) throw new Error("Task not found");
 
   await requireWorkspaceMember(session.user.id, task.project.workspaceId);
 
-  return await prisma.task.update({
+  const updatedTask = await prisma.task.update({
     where: { id: taskId },
     data: {
       ...(data.title && { title: data.title.trim() }),
@@ -349,6 +428,16 @@ export async function updateTaskAction(
       ...(data.status && { status: data.status }),
     },
   });
+
+  await internalLogActivity({
+    workspaceId: task.project.workspaceId,
+    userId: session.user.id,
+    action: "updated a task",
+    targetItem: updatedTask.title,
+    project: task.project.name || "Orbit Workspace",
+  });
+
+  return updatedTask;
 }
 
 export async function deleteTaskAction(taskId: string) {
@@ -356,13 +445,23 @@ export async function deleteTaskAction(taskId: string) {
 
   const task = await prisma.task.findUnique({
     where: { id: taskId },
-    include: { project: { select: { workspaceId: true } } },
+    include: { project: { select: { workspaceId: true, name: true } } },
   });
   if (!task) throw new Error("Task not found");
 
   await requireWorkspaceMember(session.user.id, task.project.workspaceId);
 
-  return await prisma.task.delete({ where: { id: taskId } });
+  const deleted = await prisma.task.delete({ where: { id: taskId } });
+
+  await internalLogActivity({
+    workspaceId: task.project.workspaceId,
+    userId: session.user.id,
+    action: "deleted a task",
+    targetItem: task.title,
+    project: task.project.name || "Orbit Workspace",
+  });
+
+  return deleted;
 }
 
 export async function addMemberByEmailAction(workspaceId: string, email: string) {
@@ -384,11 +483,20 @@ export async function addMemberByEmailAction(workspaceId: string, email: string)
     const token = randomBytes(24).toString("hex");
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
-    return await prisma.invitation.upsert({
+    const inv = await prisma.invitation.upsert({
       where: { email_workspaceId: { email: targetEmail, workspaceId } },
       create: { email: targetEmail, workspaceId, token, expiresAt },
       update: { token, expiresAt },
     });
+
+    await internalLogActivity({
+      workspaceId,
+      userId: session.user.id,
+      action: "invited a new member",
+      targetItem: targetEmail,
+    });
+
+    return inv;
   }
 
   const existing = await prisma.membership.findUnique({
@@ -404,7 +512,7 @@ export async function addMemberByEmailAction(workspaceId: string, email: string)
     throw new Error("User is already a member of this workspace.");
   }
 
-  return await prisma.membership.create({
+  const newMember = await prisma.membership.create({
     data: {
       workspaceId,
       userId: targetUser.id,
@@ -416,6 +524,15 @@ export async function addMemberByEmailAction(workspaceId: string, email: string)
       },
     },
   });
+
+  await internalLogActivity({
+    workspaceId,
+    userId: session.user.id,
+    action: "joined the workspace team",
+    targetItem: targetUser.name || targetUser.email,
+  });
+
+  return newMember;
 }
 
 export async function acceptInvitationAction(token: string) {
@@ -439,6 +556,13 @@ export async function acceptInvitationAction(token: string) {
   });
 
   await prisma.invitation.delete({ where: { id: invitation.id } });
+
+  await internalLogActivity({
+    workspaceId: invitation.workspaceId,
+    userId: session.user.id,
+    action: "accepted workspace invitation",
+    targetItem: session.user.name || session.user.email,
+  });
 
   return membership;
 }
@@ -534,7 +658,7 @@ export async function getWorkspaceActivitiesAction(workspaceId: string) {
       },
     },
     orderBy: { createdAt: "desc" },
-    take: 20,
+    take: 50,
   });
 }
 
