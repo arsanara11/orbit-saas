@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import WorkspaceShell from "@/components/WorkspaceShell";
-import { useWorkspace } from "@/context/WorkspaceContext";
 import { getInitialWorkspaceData, getWorkspaceActivitiesAction } from "@/app/actions";
 
 type ActivityCategory = "All activity" | "Tasks" | "Projects" | "Members";
@@ -135,7 +134,6 @@ function Icon({ name, size = 14 }: { name: string; size?: number }) {
 
 export default function ActivityPage() {
   const router = useRouter();
-  const { activities: globalActivities } = useWorkspace();
 
   const [dbActivities, setDbActivities] = useState<ActivityItem[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<ActivityCategory>("All activity");
@@ -146,115 +144,91 @@ export default function ActivityPage() {
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
 
   const [activeDetailItem, setActiveDetailItem] = useState<ActivityItem | null>(null);
-  const [visibleCount, setVisibleCount] = useState(10);
+  const [visibleCount, setVisibleCount] = useState(20);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Synchronize data langsung dari PostgreSQL
-  useEffect(() => {
+  const loadActivities = useCallback(async () => {
     setIsLoading(true);
-    getInitialWorkspaceData()
-      .then(async (res) => {
-        if (res?.workspace) {
-          const wsId = res.workspace.id;
-          const wsName = res.workspace.name || "Orbit Workspace";
+    try {
+      const res = await getInitialWorkspaceData();
+      if (res?.workspace) {
+        const wsId = res.workspace.id;
+        const wsName = res.workspace.name || "Orbit Workspace";
 
-          let rawActivities = res.workspace.activities || [];
-          try {
-            const fetched = await getWorkspaceActivitiesAction(wsId);
-            if (fetched && fetched.length > 0) {
-              rawActivities = fetched;
-            }
-          } catch (e) {
-            console.error("Gagal mengambil activity real-time:", e);
+        let rawActivities = res.workspace.activities || [];
+        try {
+          const fetched = await getWorkspaceActivitiesAction(wsId);
+          if (fetched && fetched.length > 0) {
+            rawActivities = fetched;
           }
-
-          if (rawActivities && rawActivities.length > 0) {
-            const formatted: ActivityItem[] = rawActivities.map((act: any) => {
-              const rDate = new Date(act.createdAt);
-              const actorName = act.user?.name || "Workspace Member";
-              const initials = getInitials(actorName);
-
-              // Ambil nama item dari targetItem atau fallback target
-              const targetVal = act.targetItem || act.target || "item";
-              const actLower = (act.action || "").toLowerCase();
-              const itemLower = targetVal.toLowerCase();
-
-              // Deteksi otomatis kategori (task/project/member)
-              const tType: "task" | "project" | "member" =
-                actLower.includes("project") || itemLower.includes("project")
-                  ? "project"
-                  : actLower.includes("member") || actLower.includes("invite") || actLower.includes("joined") || actLower.includes("team")
-                  ? "member"
-                  : "task";
-
-              return {
-                id: act.id,
-                actor: {
-                  name: actorName,
-                  avatarInitials: initials,
-                  role: "Member",
-                },
-                action: act.action,
-                targetItem: targetVal,
-                targetType: tType,
-                project: act.project || wsName,
-                timestamp: rDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-                exactTime: rDate.toLocaleString([], { dateStyle: "medium", timeStyle: "medium" }),
-                dateGroup: getDateGroup(rDate),
-                rawDate: rDate,
-                iconType: getIconType(act.action, tType),
-              };
-            });
-            setDbActivities(formatted);
-          }
+        } catch (e) {
+          console.error("Gagal me-fetch activity via action:", e);
         }
-      })
-      .catch(console.error)
-      .finally(() => setIsLoading(false));
+
+        if (rawActivities && rawActivities.length > 0) {
+          const formatted: ActivityItem[] = rawActivities.map((act: any) => {
+            const rDate = new Date(act.createdAt);
+            const actorName = act.user?.name || "Workspace Member";
+            const initials = getInitials(actorName);
+            const targetVal = act.targetItem || act.target || "item";
+
+            const actLower = (act.action || "").toLowerCase();
+            const itemLower = targetVal.toLowerCase();
+
+            const tType: "task" | "project" | "member" =
+              actLower.includes("project") || itemLower.includes("project")
+                ? "project"
+                : actLower.includes("member") || actLower.includes("invite") || actLower.includes("joined") || actLower.includes("team")
+                ? "member"
+                : "task";
+
+            return {
+              id: act.id,
+              actor: {
+                name: actorName,
+                avatarInitials: initials,
+                role: "Member",
+              },
+              action: act.action,
+              targetItem: targetVal,
+              targetType: tType,
+              project: act.project || wsName,
+              timestamp: rDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+              exactTime: rDate.toLocaleString([], { dateStyle: "medium", timeStyle: "medium" }),
+              dateGroup: getDateGroup(rDate),
+              rawDate: rDate,
+              iconType: getIconType(act.action, tType),
+            };
+          });
+
+          // Sort ketat berdasarkan timestamp terbaru di urutan paling atas
+          formatted.sort((a, b) => b.rawDate.getTime() - a.rawDate.getTime());
+          setDbActivities(formatted);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to load activity page data:", err);
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
-  // Gabungkan aktivitas dari DB dan Context
-  const combinedActivities = useMemo(() => {
-    const contextItems: ActivityItem[] = globalActivities.map((act) => ({
-      id: act.id,
-      actor: {
-        name: act.actorName,
-        avatarInitials: act.actorAvatar,
-        role: "Member",
-      },
-      action: act.action,
-      targetItem: act.targetItem,
-      targetType: act.targetItem.toLowerCase().includes("project")
-        ? "project"
-        : act.targetItem.toLowerCase().includes("profile")
-        ? "member"
-        : "task",
-      project: act.project || "Orbit Workspace",
-      timestamp: act.timestamp,
-      exactTime: `Today at ${act.timestamp}`,
-      dateGroup: act.dateGroup || "TODAY",
-      rawDate: new Date(),
-      iconType: (act.iconType as any) || "edit",
-    }));
+  useEffect(() => {
+    loadActivities();
+  }, [loadActivities]);
 
-    const contextIds = new Set(contextItems.map((a) => a.id));
-    const dbFiltered = dbActivities.filter((a) => !contextIds.has(a.id));
-    return [...contextItems, ...dbFiltered];
-  }, [globalActivities, dbActivities]);
-
-  // Options dinamis untuk Filter UI
   const actorOptions = useMemo(() => {
-    const actors = Array.from(new Set(combinedActivities.map((a) => a.actor.name)));
+    const actors = Array.from(new Set(dbActivities.map((a) => a.actor.name)));
     return ["All actors", ...actors];
-  }, [combinedActivities]);
+  }, [dbActivities]);
 
   const projectOptions = useMemo(() => {
-    const projects = Array.from(new Set(combinedActivities.map((a) => a.project)));
+    const projects = Array.from(new Set(dbActivities.map((a) => a.project)));
     return ["All projects", ...projects];
-  }, [combinedActivities]);
+  }, [dbActivities]);
 
   const filteredActivities = useMemo(() => {
-    return combinedActivities.filter((act) => {
+    return dbActivities.filter((act) => {
       if (selectedCategory === "Tasks" && act.targetType !== "task") return false;
       if (selectedCategory === "Projects" && act.targetType !== "project") return false;
       if (selectedCategory === "Members" && act.targetType !== "member") return false;
@@ -277,7 +251,7 @@ export default function ActivityPage() {
 
       return true;
     });
-  }, [combinedActivities, selectedCategory, selectedDateRange, selectedActor, selectedProject, searchQuery]);
+  }, [dbActivities, selectedCategory, selectedDateRange, selectedActor, selectedProject, searchQuery]);
 
   const displayedActivities = useMemo(() => {
     return filteredActivities.slice(0, visibleCount);
@@ -460,8 +434,8 @@ export default function ActivityPage() {
           </div>
         ) : filteredActivities.length === 0 ? (
           <div className="py-12 text-center space-y-2 rounded-xl border border-[var(--line)] bg-[var(--card)] p-6">
-            <strong className="block text-xs font-semibold text-white">No activity matches your filters</strong>
-            <p className="text-[11px] text-gray-400">Try searching for another keyword or clear current filters.</p>
+            <strong className="block text-xs font-semibold text-white">No activity recorded yet</strong>
+            <p className="text-[11px] text-gray-400">Perform any action in Projects or Dashboard to generate logs.</p>
             <button
               onClick={handleResetFilters}
               className="mt-1 px-3.5 py-1.5 rounded-xl bg-[#35383a] hover:bg-[#404346] text-xs font-medium text-white transition cursor-pointer"
@@ -551,7 +525,7 @@ export default function ActivityPage() {
             {visibleCount < filteredActivities.length && (
               <div className="pt-2 text-center">
                 <button
-                  onClick={() => setVisibleCount((prev) => prev + 5)}
+                  onClick={() => setVisibleCount((prev) => prev + 10)}
                   className="px-4 py-2 rounded-xl bg-[#1e2022] hover:bg-[#2a2d30] border border-[var(--line)] text-xs font-medium text-gray-300 hover:text-white transition cursor-pointer"
                 >
                   Load more activities
