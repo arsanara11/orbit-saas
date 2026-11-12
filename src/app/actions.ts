@@ -1,6 +1,7 @@
 "use server";
 
 import { headers } from "next/headers";
+import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { randomBytes } from "crypto";
@@ -9,7 +10,6 @@ import Stripe from "stripe";
 type TaskStatusType = "TODO" | "IN_PROGRESS" | "IN_REVIEW" | "DONE";
 type TaskPriorityType = "LOW" | "MEDIUM" | "HIGH" | "URGENT";
 
-// Inisialisasi Stripe
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "");
 
 const defaultProjects = [
@@ -64,7 +64,6 @@ async function requireWorkspaceMember(userId: string, workspaceId: string) {
   return membership;
 }
 
-// Helper Internal untuk Auto-Log Aktivitas ke Database
 async function internalLogActivity({
   workspaceId,
   userId,
@@ -88,8 +87,12 @@ async function internalLogActivity({
         project: project || "Orbit Workspace",
       },
     });
+
+    revalidatePath("/overview");
+    revalidatePath("/projects");
+    revalidatePath("/activity");
   } catch (err) {
-    console.error("Auto activity log failed:", err);
+    console.error("Auto activity log warning:", err);
   }
 }
 
@@ -356,6 +359,9 @@ export async function createTaskAction(data: {
       description: "Add a description to keep the team aligned on next steps.",
       status: data.status,
       priority: data.priority,
+      progress: 0,
+      commentCount: 0,
+      fileCount: 0,
       projectId: data.projectId,
       createdById: session.user.id,
       people: [userInitials],

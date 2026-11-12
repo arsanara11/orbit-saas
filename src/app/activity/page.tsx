@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import WorkspaceShell from "@/components/WorkspaceShell";
 import { useWorkspace } from "@/context/WorkspaceContext";
-import { getInitialWorkspaceData } from "@/app/actions";
+import { getInitialWorkspaceData, getWorkspaceActivitiesAction } from "@/app/actions";
 
 type ActivityCategory = "All activity" | "Tasks" | "Projects" | "Members";
 type DateRangeOption = "All time" | "Today" | "Last 7 days" | "Last 30 days";
@@ -149,22 +149,41 @@ export default function ActivityPage() {
   const [visibleCount, setVisibleCount] = useState(10);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Synchronize data dari database PostgreSQL
+  // Synchronize data langsung dari PostgreSQL
   useEffect(() => {
     setIsLoading(true);
     getInitialWorkspaceData()
-      .then((res) => {
+      .then(async (res) => {
         if (res?.workspace) {
+          const wsId = res.workspace.id;
           const wsName = res.workspace.name || "Orbit Workspace";
-          if (res.workspace.activities && res.workspace.activities.length > 0) {
-            const formatted: ActivityItem[] = res.workspace.activities.map((act: any) => {
+
+          let rawActivities = res.workspace.activities || [];
+          try {
+            const fetched = await getWorkspaceActivitiesAction(wsId);
+            if (fetched && fetched.length > 0) {
+              rawActivities = fetched;
+            }
+          } catch (e) {
+            console.error("Gagal mengambil activity real-time:", e);
+          }
+
+          if (rawActivities && rawActivities.length > 0) {
+            const formatted: ActivityItem[] = rawActivities.map((act: any) => {
               const rDate = new Date(act.createdAt);
               const actorName = act.user?.name || "Workspace Member";
               const initials = getInitials(actorName);
+
+              // Ambil nama item dari targetItem atau fallback target
+              const targetVal = act.targetItem || act.target || "item";
+              const actLower = (act.action || "").toLowerCase();
+              const itemLower = targetVal.toLowerCase();
+
+              // Deteksi otomatis kategori (task/project/member)
               const tType: "task" | "project" | "member" =
-                act.type?.toLowerCase().includes("project")
+                actLower.includes("project") || itemLower.includes("project")
                   ? "project"
-                  : act.type?.toLowerCase().includes("member")
+                  : actLower.includes("member") || actLower.includes("invite") || actLower.includes("joined") || actLower.includes("team")
                   ? "member"
                   : "task";
 
@@ -176,9 +195,9 @@ export default function ActivityPage() {
                   role: "Member",
                 },
                 action: act.action,
-                targetItem: act.target,
+                targetItem: targetVal,
                 targetType: tType,
-                project: wsName,
+                project: act.project || wsName,
                 timestamp: rDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
                 exactTime: rDate.toLocaleString([], { dateStyle: "medium", timeStyle: "medium" }),
                 dateGroup: getDateGroup(rDate),
@@ -194,7 +213,7 @@ export default function ActivityPage() {
       .finally(() => setIsLoading(false));
   }, []);
 
-  // Gabungkan aktivitas dari database real dan context
+  // Gabungkan aktivitas dari DB dan Context
   const combinedActivities = useMemo(() => {
     const contextItems: ActivityItem[] = globalActivities.map((act) => ({
       id: act.id,
@@ -223,7 +242,7 @@ export default function ActivityPage() {
     return [...contextItems, ...dbFiltered];
   }, [globalActivities, dbActivities]);
 
-  // Daftar Actor dan Project dinamis dari data asli
+  // Options dinamis untuk Filter UI
   const actorOptions = useMemo(() => {
     const actors = Array.from(new Set(combinedActivities.map((a) => a.actor.name)));
     return ["All actors", ...actors];
@@ -250,7 +269,7 @@ export default function ActivityPage() {
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const matchActor = act.actor.name.toLowerCase().includes(q);
-        const matchItem = act.targetItem.toLowerCase().includes(q);
+        const matchItem = (act.targetItem || "").toLowerCase().includes(q);
         const matchAction = act.action.toLowerCase().includes(q);
         const matchProject = act.project.toLowerCase().includes(q);
         return matchActor || matchItem || matchAction || matchProject;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import WorkspaceShell from "@/components/WorkspaceShell";
 import { authClient } from "@/lib/auth-client";
@@ -11,18 +11,11 @@ import {
   updateProjectNameAction,
   deleteTaskAction,
   updateTaskAction,
-  createProjectAction,
   getProjectTasksAction,
 } from "@/app/actions";
 
 type Status = "To Do" | "In Progress" | "In Review";
 type ViewMode = "board" | "list" | "timeline";
-
-type ProjectType = {
-  id: string;
-  name: string;
-  taskCount: number;
-};
 
 type TaskUI = {
   id: string;
@@ -210,7 +203,6 @@ export default function ProjectsPage() {
   const [showFilters, setShowFilters] = useState(false);
   const [filterPriority, setFilterPriority] = useState("All priorities");
   const [loadingData, setLoadingData] = useState(true);
-  const [switchingProject, setSwitchingProject] = useState(false);
 
   const [viewMode, setViewMode] = useState<ViewMode>("board");
   const [isPrivate, setIsPrivate] = useState(true);
@@ -223,6 +215,64 @@ export default function ProjectsPage() {
   const [editDesc, setEditDesc] = useState("");
   const [editPriority, setEditPriority] = useState<"Low" | "Medium" | "High">("Medium");
 
+  const fetchProjectData = useCallback(async () => {
+    if (!session) return;
+    setLoadingData(true);
+    try {
+      if (activeProjectId) {
+        const res = await getProjectTasksAction(activeProjectId);
+        setProjectId(res.id);
+        setProject(res.name);
+
+        const formattedTasks: TaskUI[] = res.tasks.map((t) => ({
+          id: t.id,
+          title: t.title,
+          description: t.description || "",
+          status: statusDbToUi(t.status),
+          priority: priorityDbToUi(t.priority),
+          date: new Date(t.createdAt).toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          }),
+          progress: t.progress,
+          comments: t.commentCount,
+          files: t.fileCount,
+          people: t.people.length > 0 ? t.people : [getInitials(session.user.name)],
+        }));
+        setTasks(formattedTasks);
+      } else {
+        const res = await getInitialWorkspaceData();
+        if (res?.project) {
+          setProject(res.project.name);
+          setProjectId(res.project.id);
+
+          const formattedTasks: TaskUI[] = res.tasks.map((t) => ({
+            id: t.id,
+            title: t.title,
+            description: t.description || "",
+            status: statusDbToUi(t.status),
+            priority: priorityDbToUi(t.priority),
+            date: new Date(t.createdAt).toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+            }),
+            progress: t.progress,
+            comments: t.commentCount,
+            files: t.fileCount,
+            people: t.people.length > 0 ? t.people : [getInitials(session.user.name)],
+          }));
+          setTasks(formattedTasks);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to load project data:", err);
+    } finally {
+      setLoadingData(false);
+    }
+  }, [session, activeProjectId]);
+
   useEffect(() => {
     if (!isPending && !session) {
       router.push("/login");
@@ -230,63 +280,9 @@ export default function ProjectsPage() {
     }
 
     if (session) {
-      setLoadingData(true);
-      if (activeProjectId) {
-        getProjectTasksAction(activeProjectId)
-          .then((res) => {
-            setProjectId(res.id);
-            setProject(res.name);
-
-            const formattedTasks: TaskUI[] = res.tasks.map((t) => ({
-              id: t.id,
-              title: t.title,
-              description: t.description || "",
-              status: statusDbToUi(t.status),
-              priority: priorityDbToUi(t.priority),
-              date: new Date(t.createdAt).toLocaleDateString("en-US", {
-                month: "short",
-                day: "numeric",
-                year: "numeric",
-              }),
-              progress: t.progress,
-              comments: t.commentCount,
-              files: t.fileCount,
-              people: t.people.length > 0 ? t.people : [getInitials(session.user.name)],
-            }));
-            setTasks(formattedTasks);
-          })
-          .catch((err) => console.error("Gagal mengambil data project:", err))
-          .finally(() => setLoadingData(false));
-      } else {
-        getInitialWorkspaceData()
-          .then((res) => {
-            setProject(res.project.name);
-            setProjectId(res.project.id);
-
-            const formattedTasks: TaskUI[] = res.tasks.map((t) => ({
-              id: t.id,
-              title: t.title,
-              description: t.description || "",
-              status: statusDbToUi(t.status),
-              priority: priorityDbToUi(t.priority),
-              date: new Date(t.createdAt).toLocaleDateString("en-US", {
-                month: "short",
-                day: "numeric",
-                year: "numeric",
-              }),
-              progress: t.progress,
-              comments: t.commentCount,
-              files: t.fileCount,
-              people: t.people.length > 0 ? t.people : [getInitials(session.user.name)],
-            }));
-
-            setTasks(formattedTasks);
-          })
-          .catch((err) => console.error("Gagal mengambil data workspace:", err))
-          .finally(() => setLoadingData(false));
-      }
+      fetchProjectData();
     }
-  }, [isPending, session, router, activeProjectId]);
+  }, [isPending, session, router, activeProjectId, fetchProjectData]);
 
   const userInitials = useMemo(() => getInitials(session?.user?.name), [session]);
 
@@ -319,10 +315,6 @@ export default function ProjectsPage() {
       priority: editPriority,
     };
 
-    setTasks((old) =>
-      old.map((t) => (t.id === taskId ? { ...t, ...updatedFields } : t))
-    );
-
     setActiveTask(null);
 
     try {
@@ -331,6 +323,7 @@ export default function ProjectsPage() {
         description: updatedFields.description,
         priority: priorityUiToDb(updatedFields.priority),
       });
+      await fetchProjectData();
     } catch (error) {
       console.error("Gagal menyimpan detail task:", error);
     }
@@ -341,11 +334,11 @@ export default function ProjectsPage() {
 
     if (!confirm("Apakah Anda yakin ingin menghapus task ini?")) return;
 
-    setTasks((old) => old.filter((t) => t.id !== taskId));
     if (activeTask?.id === taskId) setActiveTask(null);
 
     try {
       await deleteTaskAction(taskId);
+      await fetchProjectData();
     } catch (error) {
       console.error("Gagal menghapus task:", error);
     }
@@ -358,33 +351,16 @@ export default function ProjectsPage() {
     const dbStatus = statusUiToDb(newStatus);
 
     try {
-      const createdTask = await createTaskAction({
+      await createTaskAction({
         title: newTitle.trim(),
         projectId: projectId,
         status: dbStatus,
         priority: "MEDIUM",
       });
 
-      const newTaskUI: TaskUI = {
-        id: createdTask.id,
-        title: createdTask.title,
-        description: createdTask.description || "",
-        status: statusDbToUi(createdTask.status),
-        priority: priorityDbToUi(createdTask.priority),
-        date: new Date(createdTask.createdAt).toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        }),
-        progress: createdTask.progress,
-        comments: createdTask.commentCount,
-        files: createdTask.fileCount,
-        people: createdTask.people,
-      };
-
-      setTasks((old) => [...old, newTaskUI]);
       setNewTitle("");
       setShowForm(false);
+      await fetchProjectData();
     } catch (error) {
       console.error("Gagal menambah task:", error);
     }
@@ -394,12 +370,9 @@ export default function ProjectsPage() {
     if (e) e.stopPropagation();
     const dbStatus = statusUiToDb(newStatus);
 
-    setTasks((old) =>
-      old.map((t) => (t.id === id ? { ...t, status: newStatus } : t))
-    );
-
     try {
       await updateTaskStatusAction(id, dbStatus);
+      await fetchProjectData();
     } catch (error) {
       console.error("Gagal mengubah status task:", error);
     }
@@ -409,9 +382,9 @@ export default function ProjectsPage() {
     const name = window.prompt("Project name", project);
     if (name?.trim() && name.trim() !== project && projectId) {
       const trimmedName = name.trim();
-      setProject(trimmedName);
       try {
         await updateProjectNameAction(projectId, trimmedName);
+        await fetchProjectData();
       } catch (error) {
         console.error("Gagal mengubah nama project:", error);
       }
@@ -630,7 +603,7 @@ export default function ProjectsPage() {
         </div>
       </div>
 
-      {switchingProject || loadingData ? (
+      {loadingData ? (
         <div className="flex h-64 items-center justify-center text-gray-400">
           <div className="flex items-center gap-2 text-sm font-medium">
             <div className="h-4 w-4 animate-spin rounded-full border-2 border-violet-500 border-t-transparent" />
@@ -639,7 +612,6 @@ export default function ProjectsPage() {
         </div>
       ) : (
         <>
-          {/* TAMPILAN 1: KANBAN BOARD VIEW */}
           {viewMode === "board" && (
             <div className="kanban-board">
               {columns.map((column, ci) => {
@@ -830,7 +802,6 @@ export default function ProjectsPage() {
             </div>
           )}
 
-          {/* TAMPILAN 2: LIST VIEW TABEL */}
           {viewMode === "list" && (
             <div className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-4 text-white">
               <div className="overflow-x-auto">
@@ -896,7 +867,6 @@ export default function ProjectsPage() {
             </div>
           )}
 
-          {/* TAMPILAN 3: TIMELINE VIEW */}
           {viewMode === "timeline" && (
             <div className="rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6 text-white space-y-4">
               <div className="flex items-center justify-between pb-4 border-b border-[var(--line)]">
@@ -928,7 +898,6 @@ export default function ProjectsPage() {
         </>
       )}
 
-      {/* Modal Popup Detail Task */}
       {activeTask && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
           <div className="w-full max-w-lg rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6 shadow-2xl text-white">
@@ -1011,7 +980,6 @@ export default function ProjectsPage() {
         </div>
       )}
 
-      {/* Modal Popup Team Members */}
       {showMembersModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6 shadow-2xl text-white">
@@ -1053,7 +1021,6 @@ export default function ProjectsPage() {
         </div>
       )}
 
-      {/* Modal Popup Calendar View */}
       {showCalendarModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-2xl border border-[var(--line)] bg-[var(--card)] p-6 shadow-2xl text-white">
