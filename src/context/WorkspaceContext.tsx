@@ -1,6 +1,11 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
+import {
+  getInitialWorkspaceData,
+  getWorkspaceActivitiesAction,
+  logActivityAction,
+} from "@/app/actions";
 
 export type UserProfile = {
   name: string;
@@ -33,11 +38,17 @@ export type ActivityItem = {
   targetItem: string;
   project: string;
   timestamp: string;
+  exactTime?: string;
+  rawTimestamp?: string;
   dateGroup: "TODAY" | "YESTERDAY";
   iconType: "check" | "edit" | "folder";
 };
 
 type WorkspaceContextType = {
+  workspaceId: string;
+  workspaceName: string;
+  setActiveWorkspaceId: (id: string) => void;
+  refreshWorkspaceData: () => Promise<void>;
   profile: UserProfile;
   updateProfile: (newProfile: Partial<UserProfile>) => void;
   calendarItems: CalendarItem[];
@@ -48,11 +59,11 @@ type WorkspaceContextType = {
 };
 
 const DEFAULT_PROFILE: UserProfile = {
-  name: "Nabila Sabrina",
-  email: "nabila@example.com",
+  name: "Workspace Member",
+  email: "",
   bio: "Project Lead & Product Strategist at Orbit Workspace.",
   avatarUrl: null,
-  initials: "NS",
+  initials: "WM",
 };
 
 const DEFAULT_CALENDAR: CalendarItem[] = [
@@ -78,69 +89,145 @@ const DEFAULT_CALENDAR: CalendarItem[] = [
   },
 ];
 
-const DEFAULT_ACTIVITIES: ActivityItem[] = [
-  {
-    id: "act-1",
-    actorName: "Nabila Sabrina",
-    actorAvatar: "NS",
-    action: "updated workspace settings",
-    targetItem: "Profile Information",
-    project: "Orbit Workspace",
-    timestamp: "10:42 AM",
-    dateGroup: "TODAY",
-    iconType: "edit",
-  },
-];
+function getInitials(name?: string) {
+  if (!name) return "WM";
+  const parts = name.trim().split(" ");
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+  return name.slice(0, 2).toUpperCase();
+}
+
+function mapIconType(action: string): "check" | "edit" | "folder" {
+  const lower = action.toLowerCase();
+  if (lower.includes("complete") || lower.includes("done")) return "check";
+  if (lower.includes("project") || lower.includes("workspace")) return "folder";
+  return "edit";
+}
+
+function mapDateGroup(date: Date): "TODAY" | "YESTERDAY" {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const target = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const diffDays = Math.floor((today.getTime() - target.getTime()) / (1000 * 60 * 60 * 24));
+  return diffDays <= 0 ? "TODAY" : "YESTERDAY";
+}
 
 const WorkspaceContext = createContext<WorkspaceContextType | undefined>(undefined);
 
 export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
+  const [workspaceId, setWorkspaceId] = useState<string>("");
+  const [workspaceName, setWorkspaceName] = useState<string>("Orbit Workspace");
   const [profile, setProfile] = useState<UserProfile>(DEFAULT_PROFILE);
   const [calendarItems, setCalendarItems] = useState<CalendarItem[]>(DEFAULT_CALENDAR);
-  const [activities, setActivities] = useState<ActivityItem[]>(DEFAULT_ACTIVITIES);
+  const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [isInitialized, setIsInitialized] = useState(false);
 
-  // Load state dari localStorage saat mount
+  const refreshWorkspaceData = useCallback(async (overrideWorkspaceId?: string) => {
+    try {
+      const savedWsId =
+        overrideWorkspaceId ||
+        workspaceId ||
+        (typeof window !== "undefined" ? localStorage.getItem("orbit_active_workspace_id") || undefined : undefined);
+
+      const res = await getInitialWorkspaceData(savedWsId);
+      if (!res?.workspace) return;
+
+      const activeWsId = res.workspace.id;
+      const activeWsName = res.workspace.name || "Orbit Workspace";
+
+      setWorkspaceId(activeWsId);
+      setWorkspaceName(activeWsName);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("orbit_active_workspace_id", activeWsId);
+      }
+
+      if (res.user) {
+        setProfile((prev) => ({
+          ...prev,
+          name: res.user.name || prev.name,
+          email: res.user.email || prev.email,
+          avatarUrl: res.user.image || prev.avatarUrl,
+          initials: getInitials(res.user.name || prev.name),
+        }));
+      }
+
+      let rawActs = res.workspace.activities || [];
+      try {
+        const latestActs = await getWorkspaceActivitiesAction(activeWsId);
+        if (latestActs) {
+          rawActs = latestActs;
+        }
+      } catch {
+        // Fallback ke res.workspace.activities jika gagal
+      }
+
+      const mappedActs: ActivityItem[] = rawActs.map((act: any) => {
+        const created = new Date(act.createdAt);
+        const actorName = act.user?.name || res.user?.name || "Workspace Member";
+        return {
+          id: act.id,
+          actorName,
+          actorAvatar: getInitials(actorName),
+          action: act.action,
+          targetItem: act.targetItem || act.target || "item",
+          project: act.project || activeWsName,
+          timestamp: created.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          exactTime: created.toLocaleString([], { dateStyle: "medium", timeStyle: "medium" }),
+          rawTimestamp: created.toISOString(),
+          dateGroup: mapDateGroup(created),
+          iconType: mapIconType(act.action || ""),
+        };
+      });
+
+      setActivities(mappedActs);
+    } catch {
+      // Abaikan jika user belum login (misal sedang di halaman /login)
+    }
+  }, [workspaceId]);
+
   useEffect(() => {
     try {
-      const savedProfile = localStorage.getItem("orbit_profile");
       const savedCalendar = localStorage.getItem("orbit_calendar");
-      const savedActivities = localStorage.getItem("orbit_activities");
-
-      if (savedProfile) setProfile(JSON.parse(savedProfile));
       if (savedCalendar) setCalendarItems(JSON.parse(savedCalendar));
-      if (savedActivities) setActivities(JSON.parse(savedActivities));
     } catch (e) {
-      console.error("Gagal membaca data dari localStorage", e);
+      console.error("Gagal membaca calendar dari localStorage", e);
     }
-    setIsInitialized(true);
-  }, []);
 
-  // Sync state ke localStorage tiap ada perubahan
+    refreshWorkspaceData().finally(() => {
+      setIsInitialized(true);
+    });
+  }, [refreshWorkspaceData]);
+
   useEffect(() => {
     if (!isInitialized) return;
-    localStorage.setItem("orbit_profile", JSON.stringify(profile));
     localStorage.setItem("orbit_calendar", JSON.stringify(calendarItems));
-    localStorage.setItem("orbit_activities", JSON.stringify(activities));
-  }, [profile, calendarItems, activities, isInitialized]);
+  }, [calendarItems, isInitialized]);
+
+  const setActiveWorkspaceId = (id: string) => {
+    setWorkspaceId(id);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("orbit_active_workspace_id", id);
+    }
+    refreshWorkspaceData(id);
+  };
 
   const updateProfile = (newProfile: Partial<UserProfile>) => {
     setProfile((prev) => {
       const updated = { ...prev, ...newProfile };
       if (newProfile.name) {
-        const parts = newProfile.name.trim().split(" ");
-        updated.initials = parts.length > 1 ? `${parts[0][0]}${parts[1][0]}`.toUpperCase() : parts[0].slice(0, 2).toUpperCase();
+        updated.initials = getInitials(newProfile.name);
       }
       return updated;
     });
 
-    logActivity("updated profile information", newProfile.name || "User Profile", "Orbit Workspace");
+    logActivity("updated profile information", newProfile.name || "User Profile", workspaceName);
   };
 
   const addCalendarItem = (item: Omit<CalendarItem, "id">) => {
     const newItem: CalendarItem = { ...item, id: `item-${Date.now()}` };
     setCalendarItems((prev) => [...prev, newItem]);
-    logActivity(`created new ${item.type}`, item.title, item.project || "Orbit Workspace");
+    logActivity(`created new ${item.type}`, item.title, item.project || workspaceName);
   };
 
   const toggleTaskStatus = (id: string) => {
@@ -159,24 +246,42 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     );
   };
 
-  const logActivity = (action: string, targetItem: string, project = "Orbit Workspace") => {
-    const newAct: ActivityItem = {
+  const logActivity = (action: string, targetItem: string, project = workspaceName) => {
+    const now = new Date();
+    const tempAct: ActivityItem = {
       id: `act-${Date.now()}`,
       actorName: profile.name,
       actorAvatar: profile.initials,
       action,
       targetItem,
       project,
-      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      timestamp: now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      exactTime: now.toLocaleString([], { dateStyle: "medium", timeStyle: "medium" }),
+      rawTimestamp: now.toISOString(),
       dateGroup: "TODAY",
-      iconType: "edit",
+      iconType: mapIconType(action),
     };
-    setActivities((prev) => [newAct, ...prev]);
+    setActivities((prev) => [tempAct, ...prev]);
+
+    if (workspaceId) {
+      logActivityAction({
+        workspaceId,
+        action,
+        targetItem,
+        project,
+      })
+        .then(() => refreshWorkspaceData(workspaceId))
+        .catch((err) => console.error("Gagal menyimpan activity ke DB:", err));
+    }
   };
 
   return (
     <WorkspaceContext.Provider
       value={{
+        workspaceId,
+        workspaceName,
+        setActiveWorkspaceId,
+        refreshWorkspaceData: () => refreshWorkspaceData(),
         profile,
         updateProfile,
         calendarItems,
