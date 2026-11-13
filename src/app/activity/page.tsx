@@ -3,6 +3,7 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import WorkspaceShell from "@/components/WorkspaceShell";
+import { useWorkspace } from "@/context/WorkspaceContext";
 import { getInitialWorkspaceData, getWorkspaceActivitiesAction } from "@/app/actions";
 
 type ActivityCategory = "All activity" | "Tasks" | "Projects" | "Members";
@@ -35,7 +36,6 @@ type ActivityItem = {
   isDeletedTarget?: boolean;
 };
 
-// Helper untuk mengelompokkan tanggal riwayat aktivitas
 function getDateGroup(date: Date): "TODAY" | "YESTERDAY" | "LAST 7 DAYS" | "EARLIER" {
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -48,7 +48,6 @@ function getDateGroup(date: Date): "TODAY" | "YESTERDAY" | "LAST 7 DAYS" | "EARL
   return "EARLIER";
 }
 
-// Helper ikon berdasarkan tipe aksi
 function getIconType(action: string, targetType: string): "check" | "edit" | "plus" | "folder" | "user" | "clock" | "trash" {
   const actLower = action.toLowerCase();
   if (actLower.includes("complete") || actLower.includes("done")) return "check";
@@ -134,6 +133,7 @@ function Icon({ name, size = 14 }: { name: string; size?: number }) {
 
 export default function ActivityPage() {
   const router = useRouter();
+  const { workspaceId, workspaceName } = useWorkspace();
 
   const [dbActivities, setDbActivities] = useState<ActivityItem[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<ActivityCategory>("All activity");
@@ -150,68 +150,67 @@ export default function ActivityPage() {
   const loadActivities = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await getInitialWorkspaceData();
-      if (res?.workspace) {
-        const wsId = res.workspace.id;
-        const wsName = res.workspace.name || "Orbit Workspace";
+      let targetWsId = workspaceId;
+      let targetWsName = workspaceName || "Orbit Workspace";
+      let rawActivities: any[] = [];
 
-        let rawActivities = res.workspace.activities || [];
-        try {
-          const fetched = await getWorkspaceActivitiesAction(wsId);
-          if (fetched && fetched.length > 0) {
-            rawActivities = fetched;
-          }
-        } catch (e) {
-          console.error("Gagal me-fetch activity via action:", e);
-        }
-
-        if (rawActivities && rawActivities.length > 0) {
-          const formatted: ActivityItem[] = rawActivities.map((act: any) => {
-            const rDate = new Date(act.createdAt);
-            const actorName = act.user?.name || "Workspace Member";
-            const initials = getInitials(actorName);
-            const targetVal = act.targetItem || act.target || "item";
-
-            const actLower = (act.action || "").toLowerCase();
-            const itemLower = targetVal.toLowerCase();
-
-            const tType: "task" | "project" | "member" =
-              actLower.includes("project") || itemLower.includes("project")
-                ? "project"
-                : actLower.includes("member") || actLower.includes("invite") || actLower.includes("joined") || actLower.includes("team")
-                ? "member"
-                : "task";
-
-            return {
-              id: act.id,
-              actor: {
-                name: actorName,
-                avatarInitials: initials,
-                role: "Member",
-              },
-              action: act.action,
-              targetItem: targetVal,
-              targetType: tType,
-              project: act.project || wsName,
-              timestamp: rDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              exactTime: rDate.toLocaleString([], { dateStyle: "medium", timeStyle: "medium" }),
-              dateGroup: getDateGroup(rDate),
-              rawDate: rDate,
-              iconType: getIconType(act.action, tType),
-            };
-          });
-
-          // Sort ketat berdasarkan timestamp terbaru di urutan paling atas
-          formatted.sort((a, b) => b.rawDate.getTime() - a.rawDate.getTime());
-          setDbActivities(formatted);
+      if (targetWsId) {
+        rawActivities = await getWorkspaceActivitiesAction(targetWsId);
+      } else {
+        const res = await getInitialWorkspaceData();
+        if (res?.workspace) {
+          targetWsId = res.workspace.id;
+          targetWsName = res.workspace.name || "Orbit Workspace";
+          rawActivities = await getWorkspaceActivitiesAction(targetWsId);
         }
       }
+
+      const formatted: ActivityItem[] = (rawActivities || []).map((act: any) => {
+        const rDate = new Date(act.createdAt);
+        const actorName = act.user?.name || "Workspace Member";
+        const initials = getInitials(actorName);
+        const targetVal = act.targetItem || act.target || "item";
+
+        const actLower = (act.action || "").toLowerCase();
+        const itemLower = targetVal.toLowerCase();
+
+        const tType: "task" | "project" | "member" =
+          actLower.includes("project") || itemLower.includes("project")
+            ? "project"
+            : actLower.includes("member") ||
+              actLower.includes("invite") ||
+              actLower.includes("joined") ||
+              actLower.includes("team")
+            ? "member"
+            : "task";
+
+        return {
+          id: act.id,
+          actor: {
+            name: actorName,
+            avatarInitials: initials,
+            role: "Member",
+          },
+          action: act.action,
+          targetItem: targetVal,
+          targetType: tType,
+          project: act.project || targetWsName,
+          timestamp: rDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          exactTime: rDate.toLocaleString([], { dateStyle: "medium", timeStyle: "medium" }),
+          dateGroup: getDateGroup(rDate),
+          rawDate: rDate,
+          iconType: getIconType(act.action, tType),
+        };
+      });
+
+      formatted.sort((a, b) => b.rawDate.getTime() - a.rawDate.getTime());
+      setDbActivities(formatted);
     } catch (err) {
       console.error("Failed to load activity page data:", err);
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [workspaceId, workspaceName]);
 
   useEffect(() => {
     loadActivities();
@@ -574,25 +573,6 @@ export default function ActivityPage() {
                     <span className="text-gray-300">{activeDetailItem.exactTime}</span>
                   </div>
                 </div>
-
-                {activeDetailItem.changes && activeDetailItem.changes.length > 0 && (
-                  <div className="space-y-1.5">
-                    <span className="block font-semibold text-gray-300 text-[11px]">Changes:</span>
-                    {activeDetailItem.changes.map((c, idx) => (
-                      <div
-                        key={idx}
-                        className="p-2.5 rounded-xl bg-[#1e2022]/60 border border-[var(--line)] flex justify-between items-center text-[11px]"
-                      >
-                        <span className="text-gray-400">{c.field}</span>
-                        <div className="flex items-center gap-1.5">
-                          <span className="line-through text-gray-500">{c.oldValue}</span>
-                          <span className="text-gray-400">→</span>
-                          <span className="text-[#98E499] font-medium">{c.newValue}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
 
               <div className="flex justify-between items-center pt-2 border-t border-[var(--line)]">
